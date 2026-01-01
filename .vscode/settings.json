@@ -7,4 +7,5 @@
     "IDF_TARGET": "esp32c3"
   },
   "idf.flashType": "JTAG",
+  "idf.svdFilePath": "${workspaceFolder}/svd/esp32c3.svd",
 }
