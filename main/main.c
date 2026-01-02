@@ -13,45 +13,48 @@
 
 static const char *TAG = "QQMLAB_LOG";
 
-#define LED_BLINK_PERIOD (500)
+#define LED_BLINK_PERIOD (2000)
+#define GPIO_LED_WEB_SERVER (12)
+#define GPIO_LED_BREATH (13)
 #define BLINK_GPIO (13)
-#define HOSTNAME        "QQMLAB-LOGGER"
+#define HOSTNAME "QQMLAB-LOGGER"
 
 // HTTP Get Handler
-esp_err_t index_get_handler(httpd_req_t *req) 
+esp_err_t index_get_handler(httpd_req_t *req)
 {
-    const char* resp = 
-        "<html><head><title>QQMLAB</title></head>"
-        "<body style='font-family: sans-serif; text-align: center; padding-top: 50px;'>"
-        "<h1 style='color: #1a73e8;'>QQMLAB CAN LOGGER</h1>"
-        "<p style='color: #666;'>Status: <b style='color: #34a853;'>IT WORKS</b></p>"
-        "<hr style='width: 200px;'>"
-        "<p>2026.01.01 - Project Initialized</p>"
-        "</body></html>";
+    static uint8_t led_status = 0;
+    led_status                = !led_status;
+    gpio_set_level(GPIO_LED_WEB_SERVER, led_status);
+
+    char resp[256];
+    snprintf(resp, sizeof(resp),
+        "<html><body><h1>QQMLAB CAN LOGGER</h1>"
+        "<p>System Status: <b>RUNNING</b></p>"
+        "<p>Free RAM: %lu bytes</p>"
+        "<hr><p>2026.01.02 - Live Data Test</p></body></html>",
+        esp_get_free_heap_size());
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
 /* Start Web Server */
-static httpd_handle_t start_webserver(void) 
+static httpd_handle_t start_webserver(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) == ESP_OK) {
         httpd_uri_t index_uri = {
-            .uri       = "/",
-            .method    = HTTP_GET,
-            .handler   = index_get_handler,
-            .user_ctx  = NULL
-        };
+            .uri      = "/",
+            .method   = HTTP_GET,
+            .handler  = index_get_handler,
+            .user_ctx = NULL};
         httpd_register_uri_handler(server, &index_uri);
         return server;
     }
     return NULL;
 }
 
-
-static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
+static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
@@ -59,19 +62,19 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         esp_wifi_connect();
         ESP_LOGI(TAG, "Retrying connection to AP...");
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
         start_webserver();
     }
 }
 
-void wifi_init_sta(void) 
+void wifi_init_sta(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
 
-    esp_netif_set_hostname(sta_netif, HOSTNAME); 
+    esp_netif_set_hostname(sta_netif, HOSTNAME);
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -83,7 +86,7 @@ void wifi_init_sta(void)
 
     wifi_config_t wifi_config = {
         .sta = {
-            .ssid = WIFI_SSID,
+            .ssid     = WIFI_SSID,
             .password = WIFI_PASS,
         },
     };
@@ -105,20 +108,21 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
-    
+
     // Init LED
-    gpio_reset_pin(BLINK_GPIO);
-    gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
+    gpio_reset_pin(GPIO_LED_BREATH);
+    gpio_set_direction(GPIO_LED_BREATH, GPIO_MODE_OUTPUT);
+    gpio_reset_pin(GPIO_LED_WEB_SERVER);
+    gpio_set_direction(GPIO_LED_WEB_SERVER, GPIO_MODE_OUTPUT);
 
     // Start WIFI
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA Starting...");
     wifi_init_sta();
-    
+
     while (1) {
-        gpio_set_level(BLINK_GPIO, 1);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        gpio_set_level(BLINK_GPIO, 0);
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        gpio_set_level(GPIO_LED_BREATH, 1);
+        vTaskDelay(pdMS_TO_TICKS(LED_BLINK_PERIOD));
+        gpio_set_level(GPIO_LED_BREATH, 0);
+        vTaskDelay(pdMS_TO_TICKS(LED_BLINK_PERIOD));
     }
 }
-
