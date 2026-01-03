@@ -10,13 +10,11 @@
 #include "esp_http_server.h"
 
 #include "./wifi_passwd.h"
+#include "./board.h"
 
 static const char *TAG = "QQMLAB_LOG";
 
-#define LED_BLINK_PERIOD (2000)
-#define GPIO_LED_WEB_SERVER (12)
-#define GPIO_LED_BREATH (13)
-#define BLINK_GPIO (13)
+#define GPIO_LED_BREATH_PERIOD (2000)
 #define HOSTNAME "QQMLAB-LOGGER"
 
 // HTTP Get Handler
@@ -24,7 +22,6 @@ esp_err_t index_get_handler(httpd_req_t *req)
 {
     static uint8_t led_status = 0;
     led_status                = !led_status;
-    gpio_set_level(GPIO_LED_WEB_SERVER, led_status);
 
     char resp[256];
     snprintf(resp, sizeof(resp),
@@ -112,8 +109,6 @@ void app_main(void)
     // Init LED
     gpio_reset_pin(GPIO_LED_BREATH);
     gpio_set_direction(GPIO_LED_BREATH, GPIO_MODE_OUTPUT);
-    gpio_reset_pin(GPIO_LED_WEB_SERVER);
-    gpio_set_direction(GPIO_LED_WEB_SERVER, GPIO_MODE_OUTPUT);
 
     // Start WIFI
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA Starting...");
@@ -121,8 +116,8 @@ void app_main(void)
 
     while (1) {
         gpio_set_level(GPIO_LED_BREATH, 1);
-        vTaskDelay(pdMS_TO_TICKS(LED_BLINK_PERIOD));
+        vTaskDelay(pdMS_TO_TICKS(GPIO_LED_BREATH_PERIOD));
         gpio_set_level(GPIO_LED_BREATH, 0);
-        vTaskDelay(pdMS_TO_TICKS(LED_BLINK_PERIOD));
+        vTaskDelay(pdMS_TO_TICKS(GPIO_LED_BREATH_PERIOD));
     }
 }
