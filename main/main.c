@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <inttypes.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -17,22 +18,48 @@ static const char *TAG = "QQMLAB_LOG";
 #define GPIO_LED_BREATH_PERIOD (2000)
 #define HOSTNAME "QQMLAB-LOGGER"
 
+#define LED_ON (0)
+#define LED_OFF (1)
+
 // HTTP Get Handler
-esp_err_t index_get_handler(httpd_req_t *req)
+esp_err_t uri_index(httpd_req_t *req)
 {
-    static uint8_t led_status = 0;
-    led_status                = !led_status;
+    uint32_t is_on = gpio_get_level(GPIO_LED_BREATH) == LED_ON;
 
     char resp[256];
-    snprintf(resp, sizeof(resp),
-        "<html><body><h1>QQMLAB CAN LOGGER</h1>"
-        "<p>Board: %s</p>"
-        "<p>System Status: <b>RUNNING</b></p>"
-        "<p>Free RAM: %lu bytes</p>"
-        "<hr><p>2026.01.03 - Switch to ESP32-CAM board</p></body></html>",
-        BOARD_NAME, esp_get_free_heap_size());
+    snprintf(resp, sizeof(resp), 
+             "<h1>QQMLAB CAN LOGGER</h1>"
+             "<p>Board: %s</p>"
+             "<p>Current LED Status: <b>%s</b></p>"
+             "<a href='/led_on'>[ Turn ON ]</a><br>"
+             "<a href='/led_off'>[ Turn OFF ]</a>"
+             "<p>Free RAM: %lu bytes</p>"
+             "<p>gpio_read=0x%08" PRIx32 "</p>",
+             BOARD_NAME, (gpio_read == LED_ON) ? "ON" : "OFF", esp_get_free_heap_size(), gpio_read);
+
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
+}
+
+static esp_err_t _http_return(httpd_req_t *req)
+{
+    httpd_resp_set_status(req, "303 See Other"); // send HTTP 303 "see other", and redirect to index
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_hdr(req, "Location", "/");
+    httpd_resp_send(req, NULL, 0); // send header only, no send content
+    return ESP_OK;
+}
+
+esp_err_t uri_led_on(httpd_req_t *req)
+{
+    gpio_set_level(GPIO_LED_BREATH, LED_ON);
+    return _http_return(req);
+}
+
+esp_err_t uri_led_off(httpd_req_t *req)
+{
+    gpio_set_level(GPIO_LED_BREATH, LED_OFF);
+    return _http_return(req);
 }
 
 /* Start Web Server */
@@ -41,12 +68,24 @@ static httpd_handle_t start_webserver(void)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) == ESP_OK) {
-        httpd_uri_t index_uri = {
+        httpd_register_uri_handler(server, &(httpd_uri_t){
             .uri      = "/",
             .method   = HTTP_GET,
-            .handler  = index_get_handler,
-            .user_ctx = NULL};
-        httpd_register_uri_handler(server, &index_uri);
+            .handler  = uri_index,
+            .user_ctx = NULL});
+
+        httpd_register_uri_handler(server, &(httpd_uri_t){
+            .uri      = "/led_on",
+            .method   = HTTP_GET,
+            .handler  = uri_led_on,
+            .user_ctx = NULL});
+
+        httpd_register_uri_handler(server, &(httpd_uri_t){
+            .uri      = "/led_off",
+            .method   = HTTP_GET,
+            .handler  = uri_led_off,
+            .user_ctx = NULL});
+        
         return server;
     }
     return NULL;
@@ -109,16 +148,9 @@ void app_main(void)
 
     // Init LED
     gpio_reset_pin(GPIO_LED_BREATH);
-    gpio_set_direction(GPIO_LED_BREATH, GPIO_MODE_OUTPUT);
+    gpio_set_direction(GPIO_LED_BREATH, GPIO_MODE_INPUT_OUTPUT); // use INPUT_OUTPUT to allow read back the status
 
     // Start WIFI
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA Starting...");
     wifi_init_sta();
-
-    while (1) {
-        gpio_set_level(GPIO_LED_BREATH, 1);
-        vTaskDelay(pdMS_TO_TICKS(GPIO_LED_BREATH_PERIOD));
-        gpio_set_level(GPIO_LED_BREATH, 0);
-        vTaskDelay(pdMS_TO_TICKS(GPIO_LED_BREATH_PERIOD));
-    }
 }
