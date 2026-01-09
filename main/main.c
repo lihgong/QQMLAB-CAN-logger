@@ -24,18 +24,35 @@ static const char *TAG = "QQMLAB_LOG";
 // HTTP Get Handler
 esp_err_t uri_index(httpd_req_t *req)
 {
-    uint32_t is_on = gpio_get_level(GPIO_LED_BREATH) == LED_ON;
+    uint32_t gpio_read = gpio_get_level(GPIO_LED_BREATH);
+
+    if(httpd_req_get_url_query_len(req)) {
+        char buf[64]; // No very long query string here, fixed size here to avoid buffer overflow
+        if(httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK) {
+            char param[16];
+            if(httpd_query_key_value(buf, "led_op", param, sizeof(param)) == ESP_OK) {
+                if (strcmp(param, "0") == 0) {
+                    gpio_set_level(GPIO_LED_BREATH, LED_ON);
+                } else if (strcmp(param, "1") == 0) {
+                    gpio_set_level(GPIO_LED_BREATH, LED_OFF);
+                } else if (strcmp(param, "2") == 0) {
+                    gpio_read = !gpio_read;
+                    gpio_set_level(GPIO_LED_BREATH, gpio_read);
+                }
+            }
+        }
+    }
 
     char resp[256];
     snprintf(resp, sizeof(resp), 
              "<h1>QQMLAB CAN LOGGER</h1>"
              "<p>Board: %s</p>"
              "<p>Current LED Status: <b>%s</b></p>"
-             "<a href='/led_on'>[ Turn ON ]</a><br>"
-             "<a href='/led_off'>[ Turn OFF ]</a>"
-             "<p>Free RAM: %lu bytes</p>"
-             "<p>gpio_read=0x%08" PRIx32 "</p>",
-             BOARD_NAME, (gpio_read == LED_ON) ? "ON" : "OFF", esp_get_free_heap_size(), gpio_read);
+             "<a href='/?led_op=0'>[ Turn ON ]</a><br>"
+             "<a href='/?led_op=1'>[ Turn OFF ]</a><br>"
+             "<a href='/?led_op=2'>[ Toggle ]</a><br>"
+             "<p>Free RAM: %lu bytes</p>",
+             BOARD_NAME, (gpio_read == LED_ON) ? "ON" : "OFF", esp_get_free_heap_size());
 
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
