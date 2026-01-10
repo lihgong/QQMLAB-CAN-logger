@@ -21,44 +21,68 @@ static const char *TAG = "QQMLAB_LOG";
 #define LED_ON (0)
 #define LED_OFF (1)
 
-// HTTP Get Handler
+static void _led_msg_handle(char *buf)
+{
+    char param[16];
+    if(httpd_query_key_value(buf, "led_op", param, sizeof(param)) == ESP_OK) {
+        ESP_LOGI(TAG, "_led_msg_handle(), param=%s", param);
+        if (strcmp(param, "0") == 0) {
+            gpio_set_level(GPIO_LED_BREATH, LED_ON);
+        } else if (strcmp(param, "1") == 0) {
+            gpio_set_level(GPIO_LED_BREATH, LED_OFF);
+        } else if (strcmp(param, "2") == 0) {
+            uint32_t gpio_read = gpio_get_level(GPIO_LED_BREATH);
+            gpio_set_level(GPIO_LED_BREATH, !gpio_read);
+        }
+    }
+}
+
 esp_err_t uri_index(httpd_req_t *req)
 {
-    uint32_t gpio_read = gpio_get_level(GPIO_LED_BREATH);
-
+    // Handle GET
     if(httpd_req_get_url_query_len(req)) {
-        char buf[64]; // No very long query string here, fixed size here to avoid buffer overflow
+        char buf[16]; // No very long query string here, fixed size here to avoid buffer overflow
         if(httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK) {
-            char param[16];
-            if(httpd_query_key_value(buf, "led_op", param, sizeof(param)) == ESP_OK) {
-                if (strcmp(param, "0") == 0) {
-                    gpio_set_level(GPIO_LED_BREATH, LED_ON);
-                } else if (strcmp(param, "1") == 0) {
-                    gpio_set_level(GPIO_LED_BREATH, LED_OFF);
-                } else if (strcmp(param, "2") == 0) {
-                    gpio_read = !gpio_read;
-                    gpio_set_level(GPIO_LED_BREATH, gpio_read);
-                }
-            }
+            ESP_LOGI(TAG, "uri_index(), GET: %s", buf);
+            _led_msg_handle(buf);
         }
     }
 
-    char resp[256];
+    char resp[1024];
     snprintf(resp, sizeof(resp), 
              "<h1>QQMLAB CAN LOGGER</h1>"
              "<p>Board: %s</p>"
              "<p>Current LED Status: <b>%s</b></p>"
+             "<hr>"
+             "<h3>GET Control Panel</h3>"
              "<a href='/?led_op=0'>[ Turn ON ]</a><br>"
              "<a href='/?led_op=1'>[ Turn OFF ]</a><br>"
              "<a href='/?led_op=2'>[ Toggle ]</a><br>"
+             "<hr>"
+             "<h3>URL Control Panel</h3>"
+             "<a href='/led_on'>[ Turn ON ]</a><br>"
+             "<a href='/led_off'>[ Turn OFF ]</a><br>"
+             "<a href='/led_toggle'>[ Toggle ]</a><br>"
+             "<hr>"
+             "<h3>POST Control Panel</h3>"
+             "<form action='/led_post' method='POST'>"
+             "<button type='submit' name='led_op' value='0'>Turn ON</button>"
+             "</form>"
+             "<form action='/led_post' method='POST'>"
+             "<button type='submit' name='led_op' value='1'>Turn OFF</button>"
+             "</form>"
+             "<form action='/led_post' method='POST'>"
+             "<button type='submit' name='led_op' value='2'>Toggle</button>"
+             "</form>"
+             "<hr>"
              "<p>Free RAM: %lu bytes</p>",
-             BOARD_NAME, (gpio_read == LED_ON) ? "ON" : "OFF", esp_get_free_heap_size());
+             BOARD_NAME, (gpio_get_level(GPIO_LED_BREATH) == LED_ON) ? "ON" : "OFF", esp_get_free_heap_size());
 
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
-static esp_err_t _http_return(httpd_req_t *req)
+static esp_err_t _http_redirect_to_index(httpd_req_t *req)
 {
     httpd_resp_set_status(req, "303 See Other"); // send HTTP 303 "see other", and redirect to index
     httpd_resp_set_type(req, "text/html");
@@ -67,42 +91,61 @@ static esp_err_t _http_return(httpd_req_t *req)
     return ESP_OK;
 }
 
+static esp_err_t uri_led_op(httpd_req_t *req, uint32_t op)
+{
+    char cmd[16];
+    snprintf(cmd, sizeof(cmd), "led_op=%" PRId32, op);
+    _led_msg_handle(cmd);
+    return _http_redirect_to_index(req);
+}
+
 esp_err_t uri_led_on(httpd_req_t *req)
 {
-    gpio_set_level(GPIO_LED_BREATH, LED_ON);
-    return _http_return(req);
+    return uri_led_op(req, 0);
 }
 
 esp_err_t uri_led_off(httpd_req_t *req)
 {
-    gpio_set_level(GPIO_LED_BREATH, LED_OFF);
-    return _http_return(req);
+    return uri_led_op(req, 1);
+}
+
+esp_err_t uri_led_toggle(httpd_req_t *req)
+{
+    return uri_led_op(req, 2);
+}
+
+esp_err_t uri_led_post(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "uri_led_post(), req->content_len=%d", req->content_len);
+    if(req->content_len) { // If the requested size > 0
+        char buf[512];
+        if(httpd_req_recv(req, buf, sizeof(buf))) {
+            buf[req->content_len] = '\0';
+            ESP_LOGI(TAG, "uri_led_post(), %s", buf);
+            _led_msg_handle(buf);
+        }
+    }
+    return _http_redirect_to_index(req);
 }
 
 /* Start Web Server */
+
 static httpd_handle_t start_webserver(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) == ESP_OK) {
-        httpd_register_uri_handler(server, &(httpd_uri_t){
-            .uri      = "/",
-            .method   = HTTP_GET,
-            .handler  = uri_index,
-            .user_ctx = NULL});
+        httpd_uri_t uri_tbl[] = {
+            {.uri="/", .method=HTTP_GET, .handler=uri_index, .user_ctx=NULL},
+            {.uri="/led_on", .method=HTTP_GET, .handler=uri_led_on, .user_ctx=NULL},
+            {.uri="/led_off", .method=HTTP_GET, .handler=uri_led_off, .user_ctx=NULL},
+            {.uri="/led_toggle", .method=HTTP_GET, .handler=uri_led_toggle, .user_ctx=NULL},
+            {.uri="/led_post", .method=HTTP_POST, .handler=uri_led_post, .user_ctx=NULL},
+        };
 
-        httpd_register_uri_handler(server, &(httpd_uri_t){
-            .uri      = "/led_on",
-            .method   = HTTP_GET,
-            .handler  = uri_led_on,
-            .user_ctx = NULL});
-
-        httpd_register_uri_handler(server, &(httpd_uri_t){
-            .uri      = "/led_off",
-            .method   = HTTP_GET,
-            .handler  = uri_led_off,
-            .user_ctx = NULL});
-        
+        for(uint32_t i=0; i<sizeof(uri_tbl)/sizeof(httpd_uri_t); i++) {
+            httpd_register_uri_handler(server, &uri_tbl[i]);
+        }
         return server;
     }
     return NULL;
