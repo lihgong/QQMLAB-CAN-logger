@@ -21,10 +21,12 @@ static const char *TAG = "QQMLAB_LOG";
 #define LED_ON (0)
 #define LED_OFF (1)
 
+esp_netif_t *sta_netif;
+
 static void _led_msg_handle(char *buf)
 {
     char param[16];
-    if(httpd_query_key_value(buf, "led_op", param, sizeof(param)) == ESP_OK) {
+    if (httpd_query_key_value(buf, "led_op", param, sizeof(param)) == ESP_OK) {
         ESP_LOGI(TAG, "_led_msg_handle(), param=%s", param);
         if (strcmp(param, "0") == 0) {
             gpio_set_level(GPIO_LED_BREATH, LED_ON);
@@ -40,43 +42,53 @@ static void _led_msg_handle(char *buf)
 esp_err_t uri_index(httpd_req_t *req)
 {
     // Handle GET
-    if(httpd_req_get_url_query_len(req)) {
+    if (httpd_req_get_url_query_len(req)) {
         char buf[16]; // No very long query string here, fixed size here to avoid buffer overflow
-        if(httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK) {
+        if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK) {
             ESP_LOGI(TAG, "uri_index(), GET: %s", buf);
             _led_msg_handle(buf);
         }
     }
 
+    esp_netif_ip_info_t ip_info;
+    esp_netif_get_ip_info(sta_netif, &ip_info);
+
     char resp[1024];
-    snprintf(resp, sizeof(resp), 
-             "<h1>QQMLAB CAN LOGGER</h1>"
-             "<p>Board: %s</p>"
-             "<p>Current LED Status: <b>%s</b></p>"
-             "<hr>"
-             "<h3>GET Control Panel</h3>"
-             "<a href='/?led_op=0'>[ Turn ON ]</a><br>"
-             "<a href='/?led_op=1'>[ Turn OFF ]</a><br>"
-             "<a href='/?led_op=2'>[ Toggle ]</a><br>"
-             "<hr>"
-             "<h3>URL Control Panel</h3>"
-             "<a href='/led_on'>[ Turn ON ]</a><br>"
-             "<a href='/led_off'>[ Turn OFF ]</a><br>"
-             "<a href='/led_toggle'>[ Toggle ]</a><br>"
-             "<hr>"
-             "<h3>POST Control Panel</h3>"
-             "<form action='/led_post' method='POST'>"
-             "<button type='submit' name='led_op' value='0'>Turn ON</button>"
-             "</form>"
-             "<form action='/led_post' method='POST'>"
-             "<button type='submit' name='led_op' value='1'>Turn OFF</button>"
-             "</form>"
-             "<form action='/led_post' method='POST'>"
-             "<button type='submit' name='led_op' value='2'>Toggle</button>"
-             "</form>"
-             "<hr>"
-             "<p>Free RAM: %lu bytes</p>",
-             BOARD_NAME, (gpio_get_level(GPIO_LED_BREATH) == LED_ON) ? "ON" : "OFF", esp_get_free_heap_size());
+    snprintf(resp, sizeof(resp),
+        "<h1>QQMLAB CAN LOGGER</h1>"
+        "<h3>Status</h3>"
+        "<p>"
+        "Board: %s<br>"
+        "IP: " IPSTR "<br>"
+        "Netmask: " IPSTR "<br>"
+        "Gateway: " IPSTR "<br>"
+        "Free RAM: %lu bytes<br>"
+        "Current LED Status: <b>%s</b><br>"
+        "</p>"
+        "<hr>"
+        "<h3>URL Control Panel</h3>"
+        "<a href='/led_on'>[ Turn ON ]</a><br>"
+        "<a href='/led_off'>[ Turn OFF ]</a><br>"
+        "<a href='/led_toggle'>[ Toggle ]</a><br>"
+        "<hr>"
+        "<h3>GET Control Panel</h3>"
+        "<a href='/?led_op=0'>[ Turn ON ]</a><br>"
+        "<a href='/?led_op=1'>[ Turn OFF ]</a><br>"
+        "<a href='/?led_op=2'>[ Toggle ]</a><br>"
+        "<hr>"
+        "<h3>POST Control Panel</h3>"
+        "<form action='/led_post' method='POST'>"
+        "<button type='submit' name='led_op' value='0'>Turn ON</button>"
+        "</form>"
+        "<form action='/led_post' method='POST'>"
+        "<button type='submit' name='led_op' value='1'>Turn OFF</button>"
+        "</form>"
+        "<form action='/led_post' method='POST'>"
+        "<button type='submit' name='led_op' value='2'>Toggle</button>"
+        "</form>"
+        "<hr>",
+        BOARD_NAME, IP2STR(&ip_info.ip), IP2STR(&ip_info.netmask), IP2STR(&ip_info.gw), esp_get_free_heap_size(),
+        (gpio_get_level(GPIO_LED_BREATH) == LED_ON) ? "ON" : "OFF");
 
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
@@ -117,9 +129,9 @@ esp_err_t uri_led_toggle(httpd_req_t *req)
 esp_err_t uri_led_post(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "uri_led_post(), req->content_len=%d", req->content_len);
-    if(req->content_len) { // If the requested size > 0
+    if (req->content_len) { // If the requested size > 0
         char buf[512];
-        if(httpd_req_recv(req, buf, sizeof(buf))) {
+        if (httpd_req_recv(req, buf, sizeof(buf))) {
             buf[req->content_len] = '\0';
             ESP_LOGI(TAG, "uri_led_post(), %s", buf);
             _led_msg_handle(buf);
@@ -136,14 +148,14 @@ static httpd_handle_t start_webserver(void)
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) == ESP_OK) {
         httpd_uri_t uri_tbl[] = {
-            {.uri="/", .method=HTTP_GET, .handler=uri_index, .user_ctx=NULL},
-            {.uri="/led_on", .method=HTTP_GET, .handler=uri_led_on, .user_ctx=NULL},
-            {.uri="/led_off", .method=HTTP_GET, .handler=uri_led_off, .user_ctx=NULL},
-            {.uri="/led_toggle", .method=HTTP_GET, .handler=uri_led_toggle, .user_ctx=NULL},
-            {.uri="/led_post", .method=HTTP_POST, .handler=uri_led_post, .user_ctx=NULL},
+            {.uri = "/", .method = HTTP_GET, .handler = uri_index, .user_ctx = NULL},
+            {.uri = "/led_on", .method = HTTP_GET, .handler = uri_led_on, .user_ctx = NULL},
+            {.uri = "/led_off", .method = HTTP_GET, .handler = uri_led_off, .user_ctx = NULL},
+            {.uri = "/led_toggle", .method = HTTP_GET, .handler = uri_led_toggle, .user_ctx = NULL},
+            {.uri = "/led_post", .method = HTTP_POST, .handler = uri_led_post, .user_ctx = NULL},
         };
 
-        for(uint32_t i=0; i<sizeof(uri_tbl)/sizeof(httpd_uri_t); i++) {
+        for (uint32_t i = 0; i < sizeof(uri_tbl) / sizeof(httpd_uri_t); i++) {
             httpd_register_uri_handler(server, &uri_tbl[i]);
         }
         return server;
@@ -169,7 +181,7 @@ void wifi_init_sta(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
+    sta_netif = esp_netif_create_default_wifi_sta();
 
     esp_netif_set_hostname(sta_netif, HOSTNAME);
 
