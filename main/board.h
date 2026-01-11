@@ -1,6 +1,13 @@
 #ifndef __BOARD_H__
 #define __BOARD_H__
 
+// Some top-level settings can be kept here, maybe it's not truly "board" level
+// I can refactor this part later
+#define HOSTNAME "QQMLAB-LOGGER"
+
+// SD card mount position
+#define MNT_SDCARD "/sdcard"
+
 // #define TARGET_BOARD_ESP32C3
 #define TARGET_BOARD_ESP32_CAM
 
