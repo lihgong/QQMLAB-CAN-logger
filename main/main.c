@@ -42,7 +42,7 @@ void sd_card_test(void)
 
 extern esp_err_t sd_card_init(void);
 extern void wifi_init_sta(void);
-extern void sd_log_service_init(void);
+extern void sdlog_service_init(void);
 
 void app_main(void)
 {
@@ -54,7 +54,7 @@ void app_main(void)
     nvs_init();
     ESP_ERROR_CHECK(sd_card_init());
     led_init();
-    sd_log_service_init();
+    sdlog_service_init();
 
     // wifi init
     wifi_init_sta();
