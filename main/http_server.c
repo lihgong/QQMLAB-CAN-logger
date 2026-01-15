@@ -3,6 +3,8 @@
 #include "esp_netif.h"
 #include "./board.h"
 
+#include "sdlog_service.h"
+
 // TOP-level HTTP server handle
 httpd_handle_t http_server_h;
 static const char *TAG = "HTTP_SERVER";
@@ -30,6 +32,30 @@ static void _led_msg_handle(char *buf)
     }
 }
 
+static void _sdlog_msg_handle(char *buf)
+{
+    char val_str[32];
+
+    if (httpd_query_key_value(buf, "sdlog_start", val_str, sizeof(val_str)) == ESP_OK) {
+        uint32_t ch = atoi(val_str);
+        if (ch < SDLOG_CH_NUM) {
+            if (httpd_query_key_value(buf, "epoch_time", val_str, sizeof(val_str)) == ESP_OK) {
+                uint64_t epoch = strtoull(val_str, NULL, 10);
+                sdlog_start(ch, epoch);
+                ESP_LOGI(TAG, "Start CH %d, epoch: %llu", ch, epoch);
+            }
+        }
+    }
+
+    if (httpd_query_key_value(buf, "sdlog_stop", val_str, sizeof(val_str)) == ESP_OK) {
+        int ch = atoi(val_str);
+        if (ch >= 0 && ch < SDLOG_CH_NUM) {
+            sdlog_stop(ch);
+            ESP_LOGI(TAG, "Stop CH %d", ch);
+        }
+    }
+}
+
 static esp_err_t _http_redirect_to_index(httpd_req_t *req)
 {
     httpd_resp_set_status(req, "303 See Other"); // send HTTP 303 "see other", and redirect to index
@@ -46,33 +72,48 @@ esp_err_t uri_index(httpd_req_t *req)
 {
     // Handle GET
     if (httpd_req_get_url_query_len(req)) {
-        char buf[16]; // No very long query string here, fixed size here to avoid buffer overflow
+        char buf[128]; // No very long query string here, fixed size here to avoid buffer overflow
         if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK) {
             ESP_LOGI(TAG, "uri_index(), GET: %s", buf);
             _led_msg_handle(buf);
+            _sdlog_msg_handle(buf);
         }
     }
 
     esp_netif_ip_info_t ip_info;
     esp_netif_get_ip_info(wifi_manager_get_sta_netif(), &ip_info);
 
-    char resp[1024];
+    char resp[1536];
     snprintf(resp, sizeof(resp),
+        "<html>"
+        "<head><title>QQMLAB CAN Logger</title></head>"
         "<h1>QQMLAB CAN LOGGER</h1>"
         "<h3>Status</h3>"
-        "<p>"
-        "Board: %s<br>"
-        "IP: " IPSTR "<br>"
-        "Netmask: " IPSTR "<br>"
-        "Gateway: " IPSTR "<br>"
-        "Free RAM: %lu bytes<br>"
-        "Current LED Status: <b>%s</b><br>"
-        "</p>"
+        "<p>Board: %s | IP: " IPSTR " | Free RAM: %lu bytes</p>"
+        "<p>Current LED Status: <b>%s</b></p>"
         "<hr>"
-        "<h3>URL Control Panel</h3>"
-        "<a href='/led_on'>[ Turn ON ]</a><br>"
-        "<a href='/led_off'>[ Turn OFF ]</a><br>"
-        "<a href='/led_toggle'>[ Toggle ]</a><br>"
+
+        "<h3>SD Logging Control</h3>"
+        "<p>"
+        "  Channel 0 (HTTP): "
+        "  <button onclick='doStart(0)'>START</button> "
+        "  <button onclick='doStop(0)'>STOP</button><br>"
+        "  Channel 1 (CAN): "
+        "  <button onclick='doStart(1)'>START</button> "
+        "  <button onclick='doStop(1)'>STOP</button>"
+        "</p>"
+
+        "<script>"
+        "async function doStart(ch) {"
+        "  const ts = BigInt(Date.now()) * 1000n;" // 取得電腦微秒時間
+        "  location.href = `/?sdlog_start=${ch}&epoch_time=${ts.toString()}`;"
+        "}"
+
+        "async function doStop(ch) {"
+        "  location.href = `/?sdlog_stop=${ch}`;"
+        "}"
+        "</script>"
+
         "<hr>"
         "<h3>GET Control Panel</h3>"
         "<a href='/?led_op=0'>[ Turn ON ]</a><br>"
@@ -89,36 +130,13 @@ esp_err_t uri_index(httpd_req_t *req)
         "<form action='/led_post' method='POST'>"
         "<button type='submit' name='led_op' value='2'>Toggle</button>"
         "</form>"
-        "<hr>",
-        BOARD_NAME, IP2STR(&ip_info.ip), IP2STR(&ip_info.netmask), IP2STR(&ip_info.gw), esp_get_free_heap_size(),
+        "<hr>"
+        "</html>",
+        BOARD_NAME, IP2STR(&ip_info.ip), esp_get_free_heap_size(),
         led_is_on() ? "ON" : "OFF");
 
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
-}
-
-// ----------
-// URI: /led_on, /led_off, /led_toggle
-// ----------
-static esp_err_t _uri_led_op_off_toggle(httpd_req_t *req, uint32_t op)
-{
-    led_op(op);
-    return _http_redirect_to_index(req);
-}
-
-esp_err_t uri_led_on(httpd_req_t *req)
-{
-    return _uri_led_op_off_toggle(req, 0);
-}
-
-esp_err_t uri_led_off(httpd_req_t *req)
-{
-    return _uri_led_op_off_toggle(req, 1);
-}
-
-esp_err_t uri_led_toggle(httpd_req_t *req)
-{
-    return _uri_led_op_off_toggle(req, 2);
 }
 
 // ----------
@@ -151,12 +169,10 @@ void http_server_start(void)
         init = 1;
 
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+        config.stack_size     = 8192; // enlarge the stack size to avoid buffer overflow
         if (httpd_start(&http_server_h, &config) == ESP_OK) {
             httpd_uri_t uri_tbl[] = {
                 {.uri = "/", .method = HTTP_GET, .handler = uri_index, .user_ctx = NULL},
-                {.uri = "/led_on", .method = HTTP_GET, .handler = uri_led_on, .user_ctx = NULL},
-                {.uri = "/led_off", .method = HTTP_GET, .handler = uri_led_off, .user_ctx = NULL},
-                {.uri = "/led_toggle", .method = HTTP_GET, .handler = uri_led_toggle, .user_ctx = NULL},
                 {.uri = "/led_post", .method = HTTP_POST, .handler = uri_led_post, .user_ctx = NULL},
             };
 

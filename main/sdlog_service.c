@@ -17,6 +17,8 @@ static const char *TAG = "SDLOG";
 typedef struct sdlog_ctrl_ch_s {
     char *name;
     uint32_t sn;
+    FILE *fp;
+    uint64_t epoch_time;
 } sdlog_ctrl_ch_t;
 
 typedef struct sdlog_ctrl_s {
@@ -74,4 +76,57 @@ void sdlog_service_init(void)
     for (uint32_t i = 0; i < sdlog_ctrl.num_ch; i++) {
         sdlog_service_create_fd(i);
     }
+}
+
+// oh no... the operation here shall hide behind the task...
+#if 0
+void sdlog_start(uint32_t ch, uint64_t epoch_time)
+{
+    sdlog_ctrl_ch_t *p_ch = SDLOG_CH(ch);
+    if (p_ch->fp == NULL) { // logging is not on-going
+        char full_path[128];
+
+        // create output folder
+        snprintf(full_path, sizeof(full_path), "%s/%s/%06d", sdlog_ctrl.root, p_ch->name, p_ch->sn);
+        mkdir(full_path, 0700);
+
+        // open the output log file
+        snprintf(full_path, sizeof(full_path), "%s/%s/%06d/log.txt", sdlog_ctrl.root, p_ch->name, p_ch->sn);
+        p_ch->fp = fopen(full_path, "w");
+        if (p_ch->fp == NULL) {
+            ESP_LOGI(TAG, "open log file error");
+            return; // error handling
+        }
+
+        // maintain serial number
+        p_ch->sn++;
+        snprintf(full_path, sizeof(full_path), "%s/%s/sn.txt", sdlog_ctrl.root, SDLOG_CH(ch)->name);
+        FILE *fp = fopen(full_path, "w");
+        fprintf(fp, "%d\n", p_ch->sn);
+        fclose(fp);
+    }
+}
+
+void sdlog_stop(uint32_t ch)
+{
+}
+
+void sdlog_write(uint32_t ch, uint32_t len, const void *payload)
+{
+}
+#endif
+
+void sdlog_start(uint32_t ch, uint64_t epoch_time)
+{
+    ESP_LOGI(TAG, "sdlog_start(ch=%" PRIu32 ")", ch);
+}
+
+void sdlog_stop(uint32_t ch)
+{
+    ESP_LOGI(TAG, "sdlog_stop(ch=%" PRIu32 ")", ch);
+}
+
+void sdlog_write(uint32_t ch, uint32_t len, const void *payload)
+{
+    ESP_LOGI(TAG, "sdlog_write(ch=%d, len=%d)", ch, len);
 }
