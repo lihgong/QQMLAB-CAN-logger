@@ -35,7 +35,6 @@ typedef struct sdlog_ctrl_ch_s {
     char *name;
     uint32_t sn;
     FILE *fp;
-    uint64_t epoch_time;
 } sdlog_ctrl_ch_t;
 
 typedef struct sdlog_ctrl_s {
@@ -144,10 +143,8 @@ typedef struct sdlog_cmd_s {
     uint8_t cmd;
     uint8_t reserved[2];
     uint32_t length;
-    uint64_t timestamp; // epoch_time
+    uint64_t us_sys_time;
 } sdlog_cmd_t;
-
-// static void sdlog_cmd_send(uint32)
 
 void sdlog_start(uint32_t ch, uint64_t epoch_time)
 {
@@ -162,7 +159,7 @@ void sdlog_start(uint32_t ch, uint64_t epoch_time)
         p_cmd->ch          = ch;
         p_cmd->cmd         = SDLOG_CMD_START;
         p_cmd->length      = sizeof(current_us);
-        p_cmd->timestamp   = current_us;
+        p_cmd->us_sys_time = current_us;
 
         uint64_t *p_epoch_time = (uint64_t *)(p_buf + sizeof(sdlog_cmd_t));
         *p_epoch_time          = epoch_time;
@@ -183,7 +180,7 @@ void sdlog_stop(uint32_t ch)
         p_cmd->ch          = ch;
         p_cmd->cmd         = SDLOG_CMD_STOP;
         p_cmd->length      = 0;
-        p_cmd->timestamp   = esp_timer_get_time();
+        p_cmd->us_sys_time = esp_timer_get_time();
 
         xRingbufferSendComplete(sdlog_ctrl.buf_in, p_buf); // notify rbuf to read
     } else {
@@ -201,13 +198,103 @@ void sdlog_write(uint32_t ch, uint32_t len, const void *payload)
         p_cmd->ch          = ch;
         p_cmd->cmd         = SDLOG_CMD_WRITE;
         p_cmd->length      = len;
-        p_cmd->timestamp   = esp_timer_get_time();
+        p_cmd->us_sys_time = esp_timer_get_time();
 
         memcpy(p_buf + sizeof(sdlog_cmd_t), payload, len);
 
         xRingbufferSendComplete(sdlog_ctrl.buf_in, p_buf); // notify rbuf to read
     } else {
         ESP_LOGE(TAG, "RB Acquire failed, buffer full?");
+    }
+}
+
+// ----------
+// TASK IMPLEMENTATION
+// ----------
+static void _sdlog_task_openfile(sdlog_cmd_t *p_cmd, void *p_payload)
+{
+    sdlog_ctrl_ch_t *p_ch = SDLOG_CH(p_cmd->ch);
+    if (p_ch->fp) {
+        ESP_LOGI(TAG, "ch %s already opened", p_ch->name);
+        return;
+    }
+
+    // create the output folder
+    char full_path[128];
+    snprintf(full_path, sizeof(full_path), "%s/%s/%06" PRIu32, sdlog_ctrl.root, p_ch->name, p_ch->sn++);
+    mkdir(full_path, 0700);
+
+    // open log file
+    strcat(full_path, "/log.txt");
+    ESP_LOGI(TAG, "Opened %s", full_path);
+    p_ch->fp = fopen(full_path, "w");
+
+    if (p_ch->fp == NULL) { // check whether file open success
+        ESP_LOGE(TAG, "ch %s file open error", p_ch->name);
+        return;
+    }
+
+    setvbuf(p_ch->fp, NULL, _IOFBF, SDLOG_FILE_BUF_SZ); // set the wbuf of the FILE*, it writes to the SD card every 4KB
+
+    sdlog_header_t sdlog_header = {0};
+
+    // sdlog_header.sys
+    strncpy(sdlog_header.sys.magic, "QQMLAB", sizeof(sdlog_header.sys.magic));
+    sdlog_header.sys.version       = 1;
+    sdlog_header.sys.header_sz     = 512;
+    sdlog_header.sys.us_epoch_time = *(uint64_t *)(p_payload);
+    sdlog_header.sys.us_sys_time   = p_cmd->us_sys_time;
+    sdlog_header.sys.channel_id    = p_cmd->ch;
+    strncpy(sdlog_header.sys.board_name, BOARD_NAME, sizeof(sdlog_header.sys.board_name));
+    strncpy(sdlog_header.sys.firmware_ver, "20260107", sizeof(sdlog_header.sys.firmware_ver));
+    sdlog_header.sys.offset_meta = 512;
+    sdlog_header.sys.offset_data = 1024;
+
+    // sdlog_header.meta
+    snprintf(sdlog_header.meta.description, sizeof(sdlog_header.meta.description), "Channel: %d, Name: %s", p_cmd->ch, p_ch->name);
+
+    // write to the file
+    if (fwrite(&sdlog_header, sizeof(sdlog_header), 1, p_ch->fp) != 1) {
+        return;
+    }
+}
+
+static void _sdlog_task_closefile(sdlog_cmd_t *p_cmd, void *p_payload)
+{
+    sdlog_ctrl_ch_t *p_ch = SDLOG_CH(p_cmd->ch);
+
+    if (p_ch->fp) {
+        fclose(p_ch->fp);
+        p_ch->fp = NULL;
+        ESP_LOGI(TAG, "CH %s logging stopped", p_ch->name);
+    }
+}
+
+static void _sdlog_task_write(sdlog_cmd_t *p_cmd, void *p_payload)
+{
+    sdlog_ctrl_ch_t *p_ch = SDLOG_CH(p_cmd->ch);
+    if (p_ch->fp) {
+        // header
+        sdlog_data_t sdlog_data = {
+            .magic       = 0xA5, // magic word
+            .type        = 0,    // temporally, will add other types later
+            .reserved    = {0, 0},
+            .payload_len = p_cmd->length,
+            .us_sys_time = p_cmd->us_sys_time,
+        };
+        fwrite(&sdlog_data, sizeof(sdlog_data), 1, p_ch->fp);
+
+        // Body
+        if (p_cmd->length) {
+            fwrite(p_payload, 1, p_cmd->length, p_ch->fp);
+        }
+
+        // padding
+        uint32_t pad_len = (p_cmd->length + 7) / 8 * 8 - p_cmd->length;
+        if (pad_len) {
+            static const uint8_t padding_zeros[8] = {0};
+            fwrite(padding_zeros, 1, pad_len, p_ch->fp);
+        }
     }
 }
 
@@ -219,46 +306,15 @@ void sdlog_task(void *param)
         void *p_buf = xRingbufferReceive(sdlog_ctrl.buf_in, &buf_size, portMAX_DELAY);
         if (p_buf) {
             sdlog_cmd_t *p_cmd = (sdlog_cmd_t *)p_buf;
-            ESP_LOGI(TAG, "ch=%" PRIu8 ", cmd=%" PRIu8 ", length=%" PRIu32 ", time=%" PRId64, p_cmd->ch, p_cmd->cmd, p_cmd->length, p_cmd->timestamp);
+            void *p_payload    = p_buf + sizeof(sdlog_cmd_t);
+            ESP_LOGI(TAG, "ch=%" PRIu8 ", cmd=%" PRIu8 ", length=%" PRIu32 ", us_sys_time=%" PRId64, p_cmd->ch, p_cmd->cmd, p_cmd->length, p_cmd->us_sys_time);
 
             if (p_cmd->cmd == SDLOG_CMD_WRITE) { // put the common case in the beginning
-                sdlog_ctrl_ch_t *p_ch = SDLOG_CH(p_cmd->ch);
-                if (p_ch->fp) {
-                    fwrite((uint8_t *)p_buf + sizeof(sdlog_cmd_t), 1, p_cmd->length, p_ch->fp);
-                }
-
+                _sdlog_task_write(p_cmd, p_payload);
             } else if (p_cmd->cmd == SDLOG_CMD_START) {
-                sdlog_ctrl_ch_t *p_ch = SDLOG_CH(p_cmd->ch);
-
-                if (p_ch->fp) {
-                    ESP_LOGI(TAG, "ch %s already opened", p_ch->name);
-                } else {
-                    uint64_t *p_epoch = (uint64_t *)(p_buf + sizeof(sdlog_cmd_t));
-                    p_ch->epoch_time  = *p_epoch;
-                    ESP_LOGI(TAG, "SDLOG_CMD_START, epoch_time=%" PRIu64, *p_epoch);
-
-                    // create the output folder & log
-                    char full_path[128];
-                    snprintf(full_path, sizeof(full_path), "%s/%s/%06" PRIu32, sdlog_ctrl.root, p_ch->name, p_ch->sn);
-                    mkdir(full_path, 0700);
-                    strcat(full_path, "/log.txt");
-                    p_ch->fp = fopen(full_path, "w");
-                    setvbuf(p_ch->fp, NULL, _IOFBF, SDLOG_FILE_BUF_SZ); // set the wbuf of the FILE*, it writes to the SD card every 4KB
-
-                    if (p_ch->fp) {
-                        ESP_LOGI(TAG, "Opened %s", full_path);
-                        fprintf(p_ch->fp, "#START,%" PRIu64 ",%" PRIu64 "\n", *p_epoch, p_cmd->timestamp);
-                        p_ch->sn++;
-                    }
-                }
-
+                _sdlog_task_openfile(p_cmd, p_payload);
             } else if (p_cmd->cmd == SDLOG_CMD_STOP) {
-                sdlog_ctrl_ch_t *p_ch = SDLOG_CH(p_cmd->ch);
-                if (p_ch->fp) {
-                    fclose(p_ch->fp);
-                    p_ch->fp = NULL;
-                    ESP_LOGI(TAG, "CH %s logging stopped", p_ch->name);
-                }
+                _sdlog_task_closefile(p_cmd, p_payload);
             }
 
             vRingbufferReturnItem(sdlog_ctrl.buf_in, p_buf);
