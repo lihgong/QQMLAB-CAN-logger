@@ -84,7 +84,8 @@ esp_err_t uri_index(httpd_req_t *req)
     esp_netif_get_ip_info(wifi_manager_get_sta_netif(), &ip_info);
 
     char resp[1536];
-    snprintf(resp, sizeof(resp),
+    uint32_t msg_len;
+    msg_len = snprintf(resp, sizeof(resp),
         "<html>"
         "<head><title>QQMLAB CAN Logger</title></head>"
         "<h1>QQMLAB CAN LOGGER</h1>"
@@ -136,6 +137,7 @@ esp_err_t uri_index(httpd_req_t *req)
         led_is_on() ? "ON" : "OFF");
 
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+    sdlog_write(SDLOG_CH_HTTP, msg_len, resp);
     return ESP_OK;
 }
 
