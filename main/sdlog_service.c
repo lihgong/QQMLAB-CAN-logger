@@ -15,6 +15,7 @@
 
 #include "board.h"
 #include "sdlog_service.h"
+#include "sdlog_header.h"
 
 static const char *TAG = "SDLOG";
 
