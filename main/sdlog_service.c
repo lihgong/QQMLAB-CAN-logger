@@ -20,7 +20,7 @@
 static const char *TAG = "SDLOG";
 
 #define SDLOG_ROOT (MNT_SDCARD "/log")
-#define SDLOG_BUF_IN_SZ (32768)
+#define SDLOG_TASK_INBUF_SZ (32768)
 #define SDLOG_FILE_BUF_SZ (4096)
 
 // FIXME: in the sdlog service, we may encounter that sdcard service is not ready
@@ -38,11 +38,23 @@ typedef struct sdlog_ctrl_ch_s {
     void *wbuf; // for setvbuf() to hold wbuf to avoid frequently writing to SD card
 } sdlog_ctrl_ch_t;
 
+typedef struct sdlog_conv_msg_s {
+    uint8_t ch;
+    uint8_t reserved[3];
+    uint32_t sn;
+} sdlog_conv_task_msg_t;
+
 typedef struct sdlog_ctrl_s {
     char *root;
     uint32_t num_ch;
-    RingbufHandle_t buf_in;
     sdlog_ctrl_ch_t ch[SDLOG_CH_NUM];
+
+    // sdlog_task
+    RingbufHandle_t sdlog_task_inbuf;
+
+    // sdlog_conv_task
+    QueueHandle_t sdlog_conv_task_msgq;
+
 } sdlog_ctrl_t;
 
 sdlog_ctrl_t sdlog_ctrl = {
@@ -56,79 +68,6 @@ sdlog_ctrl_t sdlog_ctrl = {
 };
 
 #define SDLOG_CH(x) (&sdlog_ctrl.ch[x])
-
-// ----------
-// INIT API
-// ----------
-void sdlog_task(void *param);
-
-void sdlog_task_init(void)
-{
-    BaseType_t xReturned = xTaskCreate(
-        sdlog_task, // Function pointer
-        "SDLOG",    // Task name
-        4096,       // 4096 words (16KB), we will have a lot of large data transfer in the task, enlarge it
-        (void *)0,  // Parameter passed into the task
-        5,          // Priority (FIXME: where can I find the priority table)
-        NULL);      // Task Hanlde, if no need, passes NULL
-
-    if (xReturned != pdPASS) {
-        ESP_LOGE("SDLOG", "Failed to create task!");
-    }
-}
-
-static uint32_t sdlog_find_max_sn(const char *dir_path)
-{
-    DIR *dir = opendir(dir_path);
-    assert(dir); // ensure this is not NULL
-
-    struct dirent *entry;
-    uint32_t max_sn = 0;
-
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_type == DT_DIR) {
-            uint32_t current_sn = (uint32_t)strtoul(entry->d_name, NULL, 10);
-            if (current_sn > max_sn) {
-                max_sn = current_sn;
-            }
-        }
-    }
-    closedir(dir);
-    return max_sn;
-}
-
-static void sdlog_service_create_fd(uint32_t ch)
-{
-    struct stat st;
-    char full_path[128];
-
-    // Create log folder if it doesn't exist
-    snprintf(full_path, sizeof(full_path), "%s/%s", sdlog_ctrl.root, SDLOG_CH(ch)->name);
-    if (stat(full_path, &st) == -1) {
-        mkdir(full_path, 0700); // In FatFS, mode parameter (0700) is actually ignored, but it's a good habit to keep it
-        ESP_LOGI(TAG, "Create folder %s", full_path);
-    }
-
-    uint32_t max_sn = sdlog_find_max_sn(full_path);
-    ESP_LOGI(TAG, "%s max_sn=%" PRIu32, full_path, max_sn);
-
-    SDLOG_CH(ch)->sn = max_sn + 1;
-}
-
-void sdlog_service_init(void)
-{
-    // Create rbuf for input command
-    sdlog_ctrl.buf_in = xRingbufferCreate(SDLOG_BUF_IN_SZ, RINGBUF_TYPE_NOSPLIT);
-    assert(sdlog_ctrl.buf_in);
-
-    mkdir(sdlog_ctrl.root, 0700); // create root log folder unconditionally
-
-    for (uint32_t i = 0; i < sdlog_ctrl.num_ch; i++) {
-        sdlog_service_create_fd(i);
-    }
-
-    sdlog_task_init();
-}
 
 // ----------
 // Operate API
@@ -153,7 +92,7 @@ void sdlog_start(uint32_t ch, uint64_t epoch_time)
     uint32_t total_len  = sizeof(sdlog_cmd_t) + sizeof(current_us);
 
     void *p_buf;
-    BaseType_t res = xRingbufferSendAcquire(sdlog_ctrl.buf_in, &p_buf, total_len, 0);
+    BaseType_t res = xRingbufferSendAcquire(sdlog_ctrl.sdlog_task_inbuf, &p_buf, total_len, 0);
 
     if (res == pdTRUE && p_buf) {
         sdlog_cmd_t *p_cmd = p_buf;
@@ -165,7 +104,7 @@ void sdlog_start(uint32_t ch, uint64_t epoch_time)
         uint64_t *p_epoch_time = (uint64_t *)(p_buf + sizeof(sdlog_cmd_t));
         *p_epoch_time          = epoch_time;
 
-        xRingbufferSendComplete(sdlog_ctrl.buf_in, p_buf); // notify rbuf to read
+        xRingbufferSendComplete(sdlog_ctrl.sdlog_task_inbuf, p_buf); // notify rbuf to read
     } else {
         ESP_LOGE(TAG, "RB Acquire failed, buffer full?");
     }
@@ -174,7 +113,7 @@ void sdlog_start(uint32_t ch, uint64_t epoch_time)
 void sdlog_stop(uint32_t ch)
 {
     void *p_buf;
-    BaseType_t res = xRingbufferSendAcquire(sdlog_ctrl.buf_in, &p_buf, sizeof(sdlog_cmd_t), 0);
+    BaseType_t res = xRingbufferSendAcquire(sdlog_ctrl.sdlog_task_inbuf, &p_buf, sizeof(sdlog_cmd_t), 0);
 
     if (res == pdTRUE && p_buf) {
         sdlog_cmd_t *p_cmd = p_buf;
@@ -183,7 +122,7 @@ void sdlog_stop(uint32_t ch)
         p_cmd->length      = 0;
         p_cmd->us_sys_time = esp_timer_get_time();
 
-        xRingbufferSendComplete(sdlog_ctrl.buf_in, p_buf); // notify rbuf to read
+        xRingbufferSendComplete(sdlog_ctrl.sdlog_task_inbuf, p_buf); // notify rbuf to read
     } else {
         ESP_LOGE(TAG, "RB Acquire failed, buffer full?");
     }
@@ -192,7 +131,7 @@ void sdlog_stop(uint32_t ch)
 void sdlog_write(uint32_t ch, uint32_t len, const void *payload)
 {
     void *p_buf;
-    BaseType_t res = xRingbufferSendAcquire(sdlog_ctrl.buf_in, &p_buf, sizeof(sdlog_cmd_t) + len, 0);
+    BaseType_t res = xRingbufferSendAcquire(sdlog_ctrl.sdlog_task_inbuf, &p_buf, sizeof(sdlog_cmd_t) + len, 0);
 
     if (res == pdTRUE && p_buf) {
         sdlog_cmd_t *p_cmd = (sdlog_cmd_t *)p_buf;
@@ -203,14 +142,14 @@ void sdlog_write(uint32_t ch, uint32_t len, const void *payload)
 
         memcpy(p_buf + sizeof(sdlog_cmd_t), payload, len);
 
-        xRingbufferSendComplete(sdlog_ctrl.buf_in, p_buf); // notify rbuf to read
+        xRingbufferSendComplete(sdlog_ctrl.sdlog_task_inbuf, p_buf); // notify rbuf to read
     } else {
         ESP_LOGE(TAG, "RB Acquire failed, buffer full?");
     }
 }
 
 // ----------
-// TASK IMPLEMENTATION
+// SDLOG TASK IMPLEMENTATION
 // ----------
 static void _sdlog_task_openfile(sdlog_cmd_t *p_cmd, void *p_payload)
 {
@@ -222,7 +161,7 @@ static void _sdlog_task_openfile(sdlog_cmd_t *p_cmd, void *p_payload)
 
     // create the output folder
     char full_path[128];
-    snprintf(full_path, sizeof(full_path), "%s/%s/%06" PRIu32, sdlog_ctrl.root, p_ch->name, p_ch->sn++);
+    snprintf(full_path, sizeof(full_path), "%s/%s/%06" PRIu32, sdlog_ctrl.root, p_ch->name, p_ch->sn);
     mkdir(full_path, 0700);
 
     // open log file
@@ -275,6 +214,13 @@ static void _sdlog_task_closefile(sdlog_cmd_t *p_cmd, void *p_payload)
             p_ch->wbuf = NULL;
         }
         ESP_LOGI(TAG, "CH %s logging stopped", p_ch->name);
+
+        sdlog_conv_task_msg_t msg = {
+            .ch = p_cmd->ch,
+            .sn = p_ch->sn,
+        };
+        xQueueSend(sdlog_ctrl.sdlog_conv_task_msgq, &msg, 0); // block time = 0
+        p_ch->sn++;
     }
 }
 
@@ -308,10 +254,9 @@ static void _sdlog_task_write(sdlog_cmd_t *p_cmd, void *p_payload)
 
 void sdlog_task(void *param)
 {
-    ESP_LOGI(TAG, "sdlog_task started");
     while (1) {
         size_t buf_size;
-        void *p_buf = xRingbufferReceive(sdlog_ctrl.buf_in, &buf_size, portMAX_DELAY);
+        void *p_buf = xRingbufferReceive(sdlog_ctrl.sdlog_task_inbuf, &buf_size, portMAX_DELAY);
         if (p_buf) {
             sdlog_cmd_t *p_cmd = (sdlog_cmd_t *)p_buf;
             void *p_payload    = p_buf + sizeof(sdlog_cmd_t);
@@ -325,7 +270,114 @@ void sdlog_task(void *param)
                 _sdlog_task_closefile(p_cmd, p_payload);
             }
 
-            vRingbufferReturnItem(sdlog_ctrl.buf_in, p_buf);
+            vRingbufferReturnItem(sdlog_ctrl.sdlog_task_inbuf, p_buf);
         }
     }
+}
+
+void sdlog_task_init(void)
+{
+    sdlog_ctrl.sdlog_task_inbuf = xRingbufferCreate(SDLOG_TASK_INBUF_SZ, RINGBUF_TYPE_NOSPLIT);
+    assert(sdlog_ctrl.sdlog_task_inbuf);
+
+    BaseType_t xReturned = xTaskCreate(
+        sdlog_task, // Function pointer
+        "SDLOG",    // Task name
+        4096,       // 4096 words (16KB), we will have a lot of large data transfer in the task, enlarge it
+        (void *)0,  // Parameter passed into the task
+        5,          // Priority (FIXME: where can I find the priority table)
+        NULL);      // Task Hanlde, if no need, passes NULL
+
+    if (xReturned != pdPASS) {
+        ESP_LOGE("SDLOG TASK", "Failed to create task!");
+    }
+}
+
+// ----------
+// SDLOG CONV TASK IMPLEMENTATION
+// ----------
+
+void sdlog_conv_task(void *param)
+{
+    sdlog_conv_task_msg_t msg;
+
+    while (1) {
+        if (xQueueReceive(sdlog_ctrl.sdlog_conv_task_msgq, &msg, portMAX_DELAY) == pdPASS) {
+            ESP_LOGI(TAG, "sdlog_conv_task(), ch=%d, sn=%d", msg.ch, msg.sn);
+            ESP_LOGI(TAG, "sdlog_conv_task(), ch=%d, sn=%d", msg.ch, msg.sn);
+            ESP_LOGI(TAG, "sdlog_conv_task(), ch=%d, sn=%d", msg.ch, msg.sn);
+        }
+    }
+}
+
+void sdlog_conv_task_init(void)
+{
+    sdlog_ctrl.sdlog_conv_task_msgq = xQueueCreate(16, sizeof(sdlog_conv_task_msg_t));
+    assert(sdlog_ctrl.sdlog_conv_task_msgq);
+
+    // sdlog_conv_task_msg_t
+    BaseType_t xReturned = xTaskCreate(
+        sdlog_conv_task, // Function pointer
+        "SDLOG_CONV",    // Task name
+        4096,            // 4096 words (16KB), we will have a lot of large data transfer in the task, enlarge it
+        (void *)0,       // Parameter passed into the task
+        2,               // Priority (FIXME: where can I find the priority table)
+        NULL);           // Task Hanlde, if no need, passes NULL
+
+    if (xReturned != pdPASS) {
+        ESP_LOGE("SDLOG CONV TASK", "Failed to create task!");
+    }
+}
+
+// ----------
+// INIT API
+// ----------
+static uint32_t sdlog_find_max_sn(const char *dir_path)
+{
+    DIR *dir = opendir(dir_path);
+    assert(dir); // ensure this is not NULL
+
+    struct dirent *entry;
+    uint32_t max_sn = 0;
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_type == DT_DIR) {
+            uint32_t current_sn = (uint32_t)strtoul(entry->d_name, NULL, 10);
+            if (current_sn > max_sn) {
+                max_sn = current_sn;
+            }
+        }
+    }
+    closedir(dir);
+    return max_sn;
+}
+
+static void sdlog_service_create_fd(uint32_t ch)
+{
+    struct stat st;
+    char full_path[128];
+
+    // Create log folder if it doesn't exist
+    snprintf(full_path, sizeof(full_path), "%s/%s", sdlog_ctrl.root, SDLOG_CH(ch)->name);
+    if (stat(full_path, &st) == -1) {
+        mkdir(full_path, 0700); // In FatFS, mode parameter (0700) is actually ignored, but it's a good habit to keep it
+        ESP_LOGI(TAG, "Create folder %s", full_path);
+    }
+
+    uint32_t max_sn = sdlog_find_max_sn(full_path);
+    ESP_LOGI(TAG, "%s max_sn=%" PRIu32, full_path, max_sn);
+
+    SDLOG_CH(ch)->sn = max_sn + 1;
+}
+
+void sdlog_service_init(void)
+{
+    mkdir(sdlog_ctrl.root, 0700); // create root log folder unconditionally
+
+    for (uint32_t i = 0; i < sdlog_ctrl.num_ch; i++) {
+        sdlog_service_create_fd(i);
+    }
+
+    sdlog_task_init();
+    sdlog_conv_task_init();
 }
