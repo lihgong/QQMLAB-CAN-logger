@@ -33,6 +33,8 @@ static const char *TAG = "SDLOG";
 // ----------
 typedef struct sdlog_ctrl_ch_s {
     char *name;
+    uint8_t type_ch;
+    uint8_t reserved[3];
     uint32_t sn;
     FILE *fp;
     void *wbuf; // for setvbuf() to hold wbuf to avoid frequently writing to SD card
@@ -61,7 +63,10 @@ sdlog_ctrl_t sdlog_ctrl = {
     .root   = SDLOG_ROOT,
     .num_ch = SDLOG_CH_NUM,
     .ch     = {
-#define SDLOG_REG(_name, _fd_name) [SDLOG_CH_##_name] = (sdlog_ctrl_ch_t){.name = _fd_name},
+#define SDLOG_REG(_name, _fd_name, _type_ch) [SDLOG_CH_##_name] = (sdlog_ctrl_ch_t){ \
+                                                 .name    = (_fd_name),              \
+                                                 .type_ch = (_type_ch),              \
+                                             },
 #include "sdlog_reg.h"
 #undef SDLOG_REG
     },
@@ -81,7 +86,8 @@ enum {
 typedef struct sdlog_cmd_s {
     uint8_t ch;
     uint8_t cmd;
-    uint8_t reserved[2];
+    uint8_t type_data; // only valid in write cmd
+    uint8_t reserved[1];
     uint32_t length;
     uint64_t us_sys_time;
 } sdlog_cmd_t;
@@ -128,7 +134,7 @@ void sdlog_stop(uint32_t ch)
     }
 }
 
-void sdlog_write(uint32_t ch, uint32_t len, const void *payload)
+void sdlog_write(uint32_t ch, uint32_t type_data, uint32_t len, const void *payload)
 {
     void *p_buf;
     BaseType_t res = xRingbufferSendAcquire(sdlog_ctrl.sdlog_task_inbuf, &p_buf, sizeof(sdlog_cmd_t) + len, 0);
@@ -137,6 +143,7 @@ void sdlog_write(uint32_t ch, uint32_t len, const void *payload)
         sdlog_cmd_t *p_cmd = (sdlog_cmd_t *)p_buf;
         p_cmd->ch          = ch;
         p_cmd->cmd         = SDLOG_CMD_WRITE;
+        p_cmd->type_data   = type_data;
         p_cmd->length      = len;
         p_cmd->us_sys_time = esp_timer_get_time();
 
@@ -187,7 +194,7 @@ static void _sdlog_task_openfile(sdlog_cmd_t *p_cmd, void *p_payload)
     sdlog_header.sys.header_sz     = 512;
     sdlog_header.sys.us_epoch_time = *(uint64_t *)(p_payload);
     sdlog_header.sys.us_sys_time   = p_cmd->us_sys_time;
-    sdlog_header.sys.channel_id    = p_cmd->ch;
+    sdlog_header.sys.type_ch       = p_ch->type_ch;
     strncpy(sdlog_header.sys.board_name, BOARD_NAME, sizeof(sdlog_header.sys.board_name));
     strncpy(sdlog_header.sys.firmware_ver, "20260107", sizeof(sdlog_header.sys.firmware_ver));
     sdlog_header.sys.offset_meta = 512;
@@ -231,7 +238,7 @@ static void _sdlog_task_write(sdlog_cmd_t *p_cmd, void *p_payload)
         // header
         sdlog_data_t sdlog_data = {
             .magic       = 0xA5, // magic word
-            .type        = 0,    // temporally, will add other types later
+            .type_data   = p_cmd->type_data,
             .reserved    = {0, 0},
             .payload_len = p_cmd->length,
             .us_sys_time = p_cmd->us_sys_time,
@@ -260,7 +267,6 @@ void sdlog_task(void *param)
         if (p_buf) {
             sdlog_cmd_t *p_cmd = (sdlog_cmd_t *)p_buf;
             void *p_payload    = p_buf + sizeof(sdlog_cmd_t);
-            ESP_LOGI(TAG, "ch=%" PRIu8 ", cmd=%" PRIu8 ", length=%" PRIu32 ", us_sys_time=%" PRId64, p_cmd->ch, p_cmd->cmd, p_cmd->length, p_cmd->us_sys_time);
 
             if (p_cmd->cmd == SDLOG_CMD_WRITE) { // put the common case in the beginning
                 _sdlog_task_write(p_cmd, p_payload);

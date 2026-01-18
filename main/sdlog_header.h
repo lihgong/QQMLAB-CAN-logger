@@ -24,7 +24,7 @@ typedef struct sdlog_header_sys_s {
             uint64_t us_epoch_time; // The epoch time that the file creates
             uint64_t us_sys_time;   // The system time that the file creates
 
-            uint32_t channel_id; // channel (0:HTTP, 1:CAN...)
+            uint32_t type_ch; // 0:HTTP, 1:CAN, 2:ADC, ...
             char board_name[32];
             char firmware_ver[16];
 
@@ -57,7 +57,7 @@ typedef struct sdlog_header_s {
 
 typedef struct sdlog_data_s {
     uint8_t magic;        // 0xA5, the sync magic word
-    uint8_t type;         // type, maybe TEXT as 1, CAN as 2, ...
+    uint8_t type_data;    // type, maybe TEXT as 1, CAN as 2, ...
     uint8_t reserved[2];  // reserved for future extension
     uint32_t payload_len; // Payload length, padding size = (payload_len + 7)/8*8 - payload_len
     uint64_t us_sys_time; // time-stamp, the field must align 8byte
