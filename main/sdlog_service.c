@@ -236,7 +236,9 @@ static void _sdlog_task_openfile(sdlog_cmd_t *p_cmd, void *p_payload)
     }
 
     p_ch->wbuf = malloc(SDLOG_FILE_BUF_SZ);
-    setvbuf(p_ch->fp, p_ch->wbuf, _IOFBF, SDLOG_FILE_BUF_SZ); // set the wbuf of the FILE*, it writes to the SD card every 4KB
+    if (p_ch->wbuf) {
+        setvbuf(p_ch->fp, p_ch->wbuf, _IOFBF, SDLOG_FILE_BUF_SZ); // set the wbuf of the FILE*, it writes to the SD card every 4KB
+    }
 
     sdlog_header_t sdlog_header = {0};
 
@@ -267,9 +269,11 @@ static void _sdlog_task_closefile(sdlog_cmd_t *p_cmd, void *p_payload)
 
     if (p_ch->fp) {
         fclose(p_ch->fp);
-        free(p_ch->wbuf);
-        p_ch->fp   = NULL;
-        p_ch->wbuf = NULL;
+        p_ch->fp = NULL;
+        if (p_ch->wbuf) {
+            free(p_ch->wbuf);
+            p_ch->wbuf = NULL;
+        }
         ESP_LOGI(TAG, "CH %s logging stopped", p_ch->name);
     }
 }
