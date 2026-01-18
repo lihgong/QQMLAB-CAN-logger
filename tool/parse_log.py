@@ -1,105 +1,101 @@
 import struct
-import csv
 import os
+import csv
 
-def parse_qqmlab_log(input_file, csv_output):
-    if not os.path.exists(input_file):
-        print(f"錯誤: 找不到檔案 {input_file}")
+# 根據你的 C 結構體定義
+HEADER_SIZE = 1024
+DATA_OFFSET = 1024
+ENTRY_HEADER_SIZE = 16  # packed: B(1) + B(1) + H(2) + I(4) + Q(8)
+
+def parse_sdlog_file(bin_path):
+    if not os.path.exists(bin_path):
+        print(f"找不到檔案: {bin_path}")
         return
 
-    results = []
-    
-    with open(input_file, "rb") as f:
-        # --- 1. 解析 System Header (512 Bytes) ---
-        sys_header_data = f.read(512)
-        if len(sys_header_data) < 512:
-            print("檔案長度不足，無法讀取 System Header")
+    with open(bin_path, 'rb') as f:
+        # 1. 解析 1024-byte Global Header (sdlog_header_sys_t)
+        # 對應你的結構: magic[8], ver(I), h_sz(I), epoch(Q), sys_start(Q), type_ch(I), board[32], fw[16]...
+        header_data = f.read(HEADER_SIZE)
+        if len(header_data) < HEADER_SIZE:
             return
 
-        # 格式串說明: 
-        # < (Little-Endian), 8s(Magic), I(Ver), I(Sz), Q(Epoch), Q(SysBase), I(Ch), 32s(Board), 16s(FW), I(MetaOff), I(DataOff)
-        sys_fmt = "<8sIIQQI32s16sII"
-        sys_fields = struct.unpack_from(sys_fmt, sys_header_data)
+        # <8s: magic[8]
+        # II: version(4), header_sz(4)
+        # QQ: us_epoch_time(8), us_sys_time(8)
+        # I:  type_ch(4)
+        # 32s16s: board_name[32], firmware_ver[16]
+        header_fmt = '<8sIIQQI32s16s'
+        header_res = struct.unpack_from(header_fmt, header_data)
         
-        magic       = sys_fields[0].decode('ascii', errors='ignore').strip('\x00')
-        version     = sys_fields[1]
-        sys_base_us = sys_fields[4]  # 這是檔案建立時的 esp_timer_get_time()
-        data_offset = sys_fields[9]  # 修正後的索引: 9
-
-        # --- 2. 解析 User Metadata (512 Bytes) ---
-        f.seek(512)
-        meta_data = f.read(512).decode('ascii', errors='ignore').strip('\x00')
-
-        print("="*70)
-        print(f"QQMLAB CAN LOGGER - 檔案解析報告")
-        print(f"  Magic String:  {magic}")
-        print(f"  系統版本:      v{version}")
-        print(f"  硬體平台:      {sys_fields[6].decode('ascii', errors='ignore').strip()}")
-        print(f"  用戶描述:      {meta_data}")
-        print(f"  數據起始偏移:  {data_offset} bytes")
-        print("="*70)
-
-        # --- 3. 解析 Data Entries ---
-        f.seek(data_offset)
-        entry_id = 1
+        magic = header_res[0].decode('ascii').strip('\x00')
+        version = header_res[1]
+        header_sz = header_res[2]
+        epoch_us = header_res[3]
+        sys_start_us = header_res[4]
+        ch_type = header_res[5]  # 0:HTTP, 1:CAN
         
-        while True:
-            current_pos = f.tell()
-            prefix_data = f.read(16) # 16-byte sdlog_data_t
-            if len(prefix_data) < 16:
-                break
-            
-            # 格式串: <BB2xIQ -> Magic(1B), Type(1B), Reserved(2x), Len(4B), Time(8B)
-            sync_byte, d_type, p_len, d_time = struct.unpack("<BB2xIQ", prefix_data)
-            
-            # 檢查同步字元 A5
-            if sync_byte != 0xA5:
-                # 若遺失同步，通常是因為檔案損毀或偏移錯誤
-                print(f"警告: 偏移量 {current_pos:06X} 遺失同步字元 (Got {hex(sync_byte)})")
-                break
+        if magic != "QQMLAB":
+            print(f"Magic 錯誤: {magic}")
+            return
 
-            # 讀取 Payload
-            payload = f.read(p_len)
-            
-            # 核心邏輯: 根據 (len+7)/8*8 計算並跳過對齊用的 Padding
-            pad_len = ((p_len + 7) // 8 * 8) - p_len
-            if pad_len > 0:
-                f.read(pad_len)
+        print(f"--- 檔案標頭解析成功 ---")
+        print(f"版本: {version}, 頻道類型: {ch_type} (0:HTTP, 1:CAN)")
+        print(f"基準 Epoch Time: {epoch_us}")
+        print(f"錄製開始 SysTime: {sys_start_us}")
+        print(f"------------------------")
 
-            # 計算相對時間 (Microseconds & Milliseconds)
-            rel_us = d_time - sys_base_us
-            rel_ms = rel_us / 1000.0
-            
-            # 嘗試轉換文字內容 (針對 HTTP/Text 類型)
-            try:
-                content_str = payload.decode('ascii', errors='ignore').replace('\n', ' ').strip()
-            except:
-                content_str = payload.hex()
+        # 2. 準備輸出 CSV
+        csv_path = bin_path.replace('.TXT', '.csv').replace('.txt', '.csv')
+        f.seek(DATA_OFFSET)
+        
+        with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.writer(csvfile)
+            # 欄位：相對微秒, 絕對微秒, 子類型, 內容
+            writer.writerow(['rel_time_us', 'abs_epoch_us', 'type_data', 'content_view'])
 
-            results.append({
-                'entry_id': entry_id,
-                'offset_hex': f"0x{current_pos:X}",
-                'rel_time_us': rel_us,      # 新增的微秒刻度 
-                'rel_time_ms': f"{rel_ms:.3f}",
-                'type': d_type,
-                'length': p_len,
-                'content': content_str
-            })
-            
-            print(f"#{entry_id:03d} | +{rel_ms:10.2f}ms | Len: {p_len:>5} | {content_str[:50]}...")
-            entry_id += 1
+            count = 0
+            while True:
+                # 3. 讀取 Packed Data Entry Header (16 bytes)
+                # 對應你的結構: magic(B), type(B), res(H), len(I), time(Q)
+                hdr_data = f.read(ENTRY_HEADER_SIZE)
+                if len(hdr_data) < ENTRY_HEADER_SIZE:
+                    break
+                
+                m_w, t_data, res, p_len, t_us = struct.unpack('<BBHIQ', hdr_data)
 
-    # --- 4. 儲存至 CSV ---
-    with open(csv_output, 'w', newline='', encoding='utf-8') as cf:
-        headers = ['entry_id', 'offset_hex', 'rel_time_us', 'rel_time_ms', 'type', 'length', 'content']
-        writer = csv.DictWriter(cf, fieldnames=headers)
-        writer.writeheader()
-        writer.writerows(results)
-    
-    print("="*70)
-    print(f"解析完成! 共處理 {len(results)} 筆數據。")
-    print(f"CSV 報表已儲存至: {csv_output}")
+                if m_w != 0xA5:
+                    # 如果同步位元錯位，這裡會發生問題，通常是因為 padding 沒算對
+                    continue
+
+                # 讀取 Payload
+                payload = f.read(p_len)
+                
+                # 4. 處理 8-byte 對齊 Padding
+                # C code: (p_cmd->length + 7) / 8 * 8 - p_cmd->length
+                pad_len = (p_len + 7) // 8 * 8 - p_len
+                if pad_len > 0:
+                    f.read(pad_len)
+
+                # --- 關鍵計算：時間戳 ---
+                # rel_time = 現在的開機微秒 - 錄製開始時的開機微秒
+                rel_time = t_us - sys_start_us
+                abs_time = epoch_us + rel_time
+
+                # 內容解碼
+                if ch_type == 0: # HTTP
+                    try:
+                        display_content = payload.decode('utf-8', errors='ignore').strip('\x00')
+                    except:
+                        display_content = payload.hex()
+                else:
+                    display_content = payload.hex()
+
+                writer.writerow([rel_time, abs_time, t_data, display_content])
+                count += 1
+
+    print(f"轉檔完成！共處理 {count} 筆資料，輸出至 {csv_path}")
 
 if __name__ == "__main__":
-    # 將檔案路徑改為你的 LOG.TXT 實際位置
-    parse_qqmlab_log("LOG.TXT", "log_analysis.csv")
+    import sys
+    target = sys.argv[1] if len(sys.argv) > 1 else 'LOG.TXT'
+    parse_sdlog_file(target)    

@@ -167,14 +167,14 @@ static void _sdlog_task_openfile(sdlog_cmd_t *p_cmd, void *p_payload)
     }
 
     // create the output folder
-    char full_path[128];
+    char full_path[256];
     snprintf(full_path, sizeof(full_path), "%s/%s/%06" PRIu32, sdlog_ctrl.root, p_ch->name, p_ch->sn);
     mkdir(full_path, 0700);
 
     // open log file
     strcat(full_path, "/log.txt");
     ESP_LOGI(TAG, "Opened %s", full_path);
-    p_ch->fp = fopen(full_path, "w");
+    p_ch->fp = fopen(full_path, "wb");
 
     if (p_ch->fp == NULL) { // check whether file open success
         ESP_LOGE(TAG, "ch %s file open error", p_ch->name);
@@ -205,6 +205,7 @@ static void _sdlog_task_openfile(sdlog_cmd_t *p_cmd, void *p_payload)
 
     // write to the file
     if (fwrite(&sdlog_header, sizeof(sdlog_header), 1, p_ch->fp) != 1) {
+        assert(0); // TODO: we should handle this error, such as mark the channel ERROR
         return;
     }
 }
@@ -361,7 +362,7 @@ static uint32_t sdlog_find_max_sn(const char *dir_path)
 static void sdlog_service_create_fd(uint32_t ch)
 {
     struct stat st;
-    char full_path[128];
+    char full_path[256];
 
     // Create log folder if it doesn't exist
     snprintf(full_path, sizeof(full_path), "%s/%s", sdlog_ctrl.root, SDLOG_CH(ch)->name);
