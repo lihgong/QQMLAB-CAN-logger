@@ -35,6 +35,7 @@ typedef struct sdlog_ctrl_ch_s {
     char *name;
     uint32_t sn;
     FILE *fp;
+    void *wbuf; // for setvbuf() to hold wbuf to avoid frequently writing to SD card
 } sdlog_ctrl_ch_t;
 
 typedef struct sdlog_ctrl_s {
@@ -234,7 +235,8 @@ static void _sdlog_task_openfile(sdlog_cmd_t *p_cmd, void *p_payload)
         return;
     }
 
-    setvbuf(p_ch->fp, NULL, _IOFBF, SDLOG_FILE_BUF_SZ); // set the wbuf of the FILE*, it writes to the SD card every 4KB
+    p_ch->wbuf = malloc(SDLOG_FILE_BUF_SZ);
+    setvbuf(p_ch->fp, p_ch->wbuf, _IOFBF, SDLOG_FILE_BUF_SZ); // set the wbuf of the FILE*, it writes to the SD card every 4KB
 
     sdlog_header_t sdlog_header = {0};
 
@@ -265,7 +267,9 @@ static void _sdlog_task_closefile(sdlog_cmd_t *p_cmd, void *p_payload)
 
     if (p_ch->fp) {
         fclose(p_ch->fp);
-        p_ch->fp = NULL;
+        free(p_ch->wbuf);
+        p_ch->fp   = NULL;
+        p_ch->wbuf = NULL;
         ESP_LOGI(TAG, "CH %s logging stopped", p_ch->name);
     }
 }
