@@ -321,11 +321,11 @@ typedef struct sdlog_exporter_para_s {
 
 typedef struct sdlog_exporter_s {
     uint32_t bmp_fmt_supported;
-    void (*cb)(sdlog_exporter_para_t *p_para);
+    esp_err_t (*cb)(sdlog_exporter_para_t *p_para);
     char *fn_output;
 } sdlog_exporter_t;
 
-#define SDLOG_EXPORTER_REG(_name, _bmp_fmt_supported, _fn_output, _cb) extern void(_cb)(sdlog_exporter_para_t * p_para);
+#define SDLOG_EXPORTER_REG(_name, _bmp_fmt_supported, _fn_output, _cb) extern esp_err_t(_cb)(sdlog_exporter_para_t * p_para);
 #include "sdlog_exporter_reg.h"
 #undef SDLOG_EXPORTER_REG
 
@@ -339,13 +339,56 @@ sdlog_exporter_t sdlog_exporter[SDLOG_EXPORTER_NUM] = {
 #undef SDLOG_EXPORTER_REG
 };
 
-void sdlog_exporter_text(sdlog_exporter_para_t *p_para)
+static void _sdlog_exporter_fp_in_padding(FILE *fp_in, uint32_t payload_len)
 {
-    ESP_LOGI(TAG, "us_epoch_time=%" PRId64 ", us_sys_time=%" PRId64, p_para->us_epoch_time, p_para->us_sys_time);
+    uint32_t pad_len = (payload_len + 7) / 8 * 8 - payload_len;
+    ESP_LOGI(TAG, "payload_len=%d, pad_len=%d", payload_len, pad_len);
+    if (pad_len) {
+        fseek(fp_in, pad_len, SEEK_CUR);
+    }
 }
 
-void sdlog_exporter_can(sdlog_exporter_para_t *p_para)
+esp_err_t sdlog_exporter_text(sdlog_exporter_para_t *p_para)
 {
+    // Move cursor to the begin-of-data
+    if (fseek(p_para->fp_in, sizeof(sdlog_header_t), SEEK_SET) != 0) { // skip gloal header
+        return ESP_FAIL;
+    }
+
+    sdlog_data_t entry;
+    while (fread(&entry, sizeof(sdlog_data_t), 1, p_para->fp_in) == 1) {
+        if (entry.magic != 0xA5) { // ensure the magic byte sync
+            ESP_LOGI(TAG, "magic_mismatch()");
+            return ESP_FAIL; // we don't expect this happened
+        }
+
+        // calculate abs time, and write to file
+        fprintf(p_para->fp_out, "[%" PRIu64 "] ", p_para->us_epoch_time + (entry.us_sys_time - p_para->us_sys_time));
+
+        // write to the file
+        uint32_t remaining_bytes = entry.payload_len;
+        while (remaining_bytes) {
+            uint32_t payload_buf[256]; // read maximum 256byte one time
+            uint32_t read_bytes = (remaining_bytes >= sizeof(payload_buf)) ? sizeof(payload_buf) : remaining_bytes;
+            if (fread(payload_buf, read_bytes, 1, p_para->fp_in) == 1) {
+                fwrite(payload_buf, read_bytes, 1, p_para->fp_out);
+                remaining_bytes -= read_bytes;
+            } else {
+                return ESP_FAIL;
+            }
+        }
+        fprintf(p_para->fp_out, "\n");
+
+        // Handle padding, 8byte align
+        _sdlog_exporter_fp_in_padding(p_para->fp_in, entry.payload_len);
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t sdlog_exporter_can(sdlog_exporter_para_t *p_para)
+{
+    return ESP_OK;
 }
 
 void sdlog_conv_task(void *param)
@@ -412,14 +455,17 @@ void sdlog_conv_task(void *param)
                 }
 
                 // Call the converter API
-                step++;
-                p_exporter->cb(&(sdlog_exporter_para_t){
+                step++; // 9
+                esp_err_t conv_result = p_exporter->cb(&(sdlog_exporter_para_t){
                     // TODO: add return to this API to examine success/fail
                     .fp_in         = fp_in,
                     .fp_out        = fp_out,
                     .us_epoch_time = us_epoch_time,
                     .us_sys_time   = us_sys_time,
                 });
+                if (conv_result != ESP_OK) {
+                    break;
+                }
 
                 step = 0; // success, set step to 0
             } while (0);
