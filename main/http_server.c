@@ -1,3 +1,6 @@
+#include <dirent.h>
+#include <sys/stat.h>
+
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -120,17 +123,8 @@ esp_err_t uri_index(httpd_req_t *req)
         "<a href='/?led_op=1'>[ Turn OFF ]</a><br>"
         "<a href='/?led_op=2'>[ Toggle ]</a><br>"
         "<hr>"
-        "<h3>POST Control Panel</h3>"
-        "<form action='/led_post' method='POST'>"
-        "<button type='submit' name='led_op' value='0'>Turn ON</button>"
-        "</form>"
-        "<form action='/led_post' method='POST'>"
-        "<button type='submit' name='led_op' value='1'>Turn OFF</button>"
-        "</form>"
-        "<form action='/led_post' method='POST'>"
-        "<button type='submit' name='led_op' value='2'>Toggle</button>"
-        "</form>"
-        "<hr>"
+        "<h3>Log Download</h3>"
+        "<a href='/browser_log'>[ Browse Log]</a><br>"
         "</html>",
         BOARD_NAME, IP2STR(&ip_info.ip), esp_get_free_heap_size(),
         led_is_on() ? "ON" : "OFF");
@@ -159,6 +153,72 @@ esp_err_t uri_led_post(httpd_req_t *req)
 }
 
 // ----------
+// URI: /browse
+// ----------
+static esp_err_t uri_browse_log_recursive(httpd_req_t *req, const char *dir_path)
+{
+    DIR *dir = opendir(dir_path);
+    if (dir == NULL) {
+        return ESP_OK; // return if the folder can't open
+    }
+
+    struct dirent *entry;
+    while ((entry = readdir(dir))) {
+        if (entry->d_name[0] == '.') { // skip hidden file, "." & ".."
+            continue;
+        }
+
+        char entry_path[128];
+        int ret = snprintf(entry_path, sizeof(entry_path), "%s/%s", dir_path, entry->d_name);
+        if (ret >= 0 && ret < sizeof(entry_path)) {
+            if (entry->d_type == DT_DIR) {
+                uri_browse_log_recursive(req, entry_path); // if folder, run the scan recursively
+            } else {
+                struct stat entry_stat;
+                stat(entry_path, &entry_stat);
+
+                char row_buf[256];
+                ret = snprintf(row_buf, sizeof(row_buf), "<tr><td>%s</td><td>%" PRId32 " KB</td>", entry_path, (entry_stat.st_size + 1023) / 1024);
+                if (ret >= 0 && ret < sizeof(row_buf)) {
+                    httpd_resp_send_chunk(req, row_buf, HTTPD_RESP_USE_STRLEN);
+                } else {
+                    ESP_LOGW(TAG, "row_buf[] not sufficient");
+                }
+
+                ret = snprintf(row_buf, sizeof(row_buf), "<td><a href='/download?path=%s' target='_blank'>View</a></td></tr>", entry_path);
+                if (ret >= 0 && ret < sizeof(row_buf)) {
+                    httpd_resp_send_chunk(req, row_buf, HTTPD_RESP_USE_STRLEN);
+                } else {
+                    ESP_LOGW(TAG, "row_buf[] not sufficient");
+                }
+            }
+        } else {
+            ESP_LOGW(TAG, "entry_path[] not sufficient");
+        }
+    }
+
+    closedir(dir);
+    return ESP_OK;
+}
+
+esp_err_t uri_browse_log(httpd_req_t *req)
+{
+    // Send HTTP header
+    httpd_resp_send_chunk(req, "<html><body style='font-family:sans-serif;'>", HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send_chunk(req, "<h2>QQMLAB Logger - Browse Files</h2>", HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send_chunk(req, "<table border='1' cellpadding='5' style='border-collapse:collapse;'>", HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send_chunk(req, "<tr bgcolor='#ddd'><th>File Path</th><th>Size</th><th>Action</th></tr>", HTTPD_RESP_USE_STRLEN);
+
+    // Execute recursive folder scan
+    uri_browse_log_recursive(req, "/sdcard/log");
+
+    // Send footer
+    httpd_resp_send_chunk(req, "</table><br><a href='/'>Back to Home</a></body></html>", HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send_chunk(req, NULL, 0); // end-of-transmission
+    return ESP_OK;
+}
+
+// ----------
 // HTTP server start body
 // ----------
 void http_server_start(void)
@@ -176,6 +236,7 @@ void http_server_start(void)
             httpd_uri_t uri_tbl[] = {
                 {.uri = "/", .method = HTTP_GET, .handler = uri_index, .user_ctx = NULL},
                 {.uri = "/led_post", .method = HTTP_POST, .handler = uri_led_post, .user_ctx = NULL},
+                {.uri = "/browser_log", .method = HTTP_GET, .handler = uri_browse_log, .user_ctx = NULL},
             };
 
             for (uint32_t i = 0; i < sizeof(uri_tbl) / sizeof(httpd_uri_t); i++) {
