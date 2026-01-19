@@ -399,21 +399,21 @@ void sdlog_conv_task(void *param)
                 // open the output binary file
                 step++; // 7
                 snprintf(full_path, sizeof(full_path), "%s/%s/%06" PRIu32 "/%s", sdlog_ctrl.root, p_src->name, msg.sn, p_exporter->fn_output);
-                FILE *fp_out = fopen(full_path, "wb");
+                fp_out = fopen(full_path, "wb");
                 if (fp_out == NULL) {
                     break;
                 }
 
-                // set the output buffer
+                // set the output file
                 step++; // 8
                 iobuf = malloc(SDLOG_FILE_BUF_SZ);
                 if (iobuf) {
-                    setvbuf(fp_out, p_src->wbuf, _IOFBF, SDLOG_FILE_BUF_SZ); // set the wbuf of the FILE*, it writes to the SD card every 4KB
+                    setvbuf(fp_out, iobuf, _IOFBF, SDLOG_FILE_BUF_SZ); // set the wbuf of the FILE*, it writes to the SD card every 4KB
                 }
 
                 // Call the converter API
                 step++;
-                sdlog_exporter_text(&(sdlog_exporter_para_t){
+                p_exporter->cb(&(sdlog_exporter_para_t){
                     // TODO: add return to this API to examine success/fail
                     .fp_in         = fp_in,
                     .fp_out        = fp_out,
@@ -421,28 +421,24 @@ void sdlog_conv_task(void *param)
                     .us_sys_time   = us_sys_time,
                 });
 
-                // success, set step to 0
-                step = 0;
+                step = 0; // success, set step to 0
             } while (0);
 
+            // clean up resources
             if (fp_in) {
                 fclose(fp_in);
                 fp_in = NULL;
             }
-
             if (fp_out) {
                 fclose(fp_out);
                 fp_out = NULL;
             }
-
             if (iobuf) {
                 free(iobuf);
                 iobuf = NULL;
             }
 
-            ESP_LOGI(TAG, "sdlog_conv_task(), ch=%d, sn=%d", msg.source, msg.sn);
-            ESP_LOGI(TAG, "sdlog_conv_task(), ch=%d, sn=%d", msg.source, msg.sn);
-            ESP_LOGI(TAG, "sdlog_conv_task(), ch=%d, sn=%d", msg.source, msg.sn);
+            ESP_LOGI(TAG, "sdlog_conv_task(), ch=%d, sn=%d, step=%d", msg.source, msg.sn, step);
         }
     }
 }
