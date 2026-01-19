@@ -2,7 +2,7 @@
 #define __SDLOG_SERVICE_H__
 
 // ----------
-// SDLOG_CH_TYPE
+// SDLOG_FMT
 // ----------
 enum { // declare what the FMT that the producer is using
     SDLOG_FMT_TEXT = 0,
@@ -20,20 +20,20 @@ enum {
 };
 
 // ----------
-// enum definition
+// SDLOG_SOURCE
 // ----------
-enum sdlog_ch_e {
-#define SDLOG_REG(_name, _fd_name, _type_ch) SDLOG_CH_##_name,
-#include "sdlog_reg.h"
-#undef SDLOG_REG
-    SDLOG_CH_NUM,
+enum sdlog_source_e {
+#define SDLOG_SOURCE_REG(_name, _fd_name, _type_ch) SDLOG_SOURCE_##_name,
+#include "sdlog_source_reg.h"
+#undef SDLOG_SOURCE_REG
+    SDLOG_SOURCE_NUM,
 };
 
 // ----------
 // Common API
 // ----------
-void sdlog_start(uint32_t ch, uint64_t epoch_time);
-void sdlog_stop(uint32_t ch);
-void sdlog_write(uint32_t ch, uint32_t type_data, uint32_t len, const void *payload);
+void sdlog_start(uint32_t source, uint64_t epoch_time);
+void sdlog_stop(uint32_t source);
+void sdlog_write(uint32_t source, uint32_t type_data, uint32_t len, const void *payload);
 
 #endif // __SDLOG_SERVICE_H__

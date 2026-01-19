@@ -31,17 +31,17 @@ static const char *TAG = "SDLOG";
 // ----------
 // data structure definition
 // ----------
-typedef struct sdlog_ctrl_ch_s {
+typedef struct sdlog_ctrl_source_s {
     char *name;
     uint8_t fmt;
     uint8_t reserved[3];
     uint32_t sn;
     FILE *fp;
     void *wbuf; // for setvbuf() to hold wbuf to avoid frequently writing to SD card
-} sdlog_ctrl_ch_t;
+} sdlog_ctrl_source_t;
 
 typedef struct sdlog_conv_msg_s {
-    uint8_t ch;
+    uint8_t source;
     uint8_t reserved[3];
     uint32_t sn;
 } sdlog_conv_task_msg_t;
@@ -49,7 +49,7 @@ typedef struct sdlog_conv_msg_s {
 typedef struct sdlog_ctrl_s {
     char *root;
     uint32_t num_ch;
-    sdlog_ctrl_ch_t ch[SDLOG_CH_NUM];
+    sdlog_ctrl_source_t source[SDLOG_SOURCE_NUM];
 
     // sdlog_task
     RingbufHandle_t sdlog_task_inbuf;
@@ -61,18 +61,18 @@ typedef struct sdlog_ctrl_s {
 
 sdlog_ctrl_t sdlog_ctrl = {
     .root   = SDLOG_ROOT,
-    .num_ch = SDLOG_CH_NUM,
-    .ch     = {
-#define SDLOG_REG(_name, _fd_name, _fmt) [SDLOG_CH_##_name] = (sdlog_ctrl_ch_t){ \
-                                             .name = (_fd_name),                 \
-                                             .fmt  = (_fmt),                     \
-                                         },
-#include "sdlog_reg.h"
-#undef SDLOG_REG
+    .num_ch = SDLOG_SOURCE_NUM,
+    .source = {
+#define SDLOG_SOURCE_REG(_name, _fd_name, _fmt) [SDLOG_SOURCE_##_name] = (sdlog_ctrl_source_t){ \
+                                                    .name = (_fd_name),                         \
+                                                    .fmt  = (_fmt),                             \
+                                                },
+#include "sdlog_source_reg.h"
+#undef SDLOG_SOURCE_REG
     },
 };
 
-#define SDLOG_CH(x) (&sdlog_ctrl.ch[x])
+#define SDLOG_SOURCE(x) (&sdlog_ctrl.source[x])
 
 // ----------
 // Operate API
@@ -84,7 +84,7 @@ enum {
 };
 
 typedef struct sdlog_cmd_s {
-    uint8_t ch;
+    uint8_t source;
     uint8_t cmd;
     uint8_t type_data; // only valid in write cmd
     uint8_t reserved[1];
@@ -92,7 +92,7 @@ typedef struct sdlog_cmd_s {
     uint64_t us_sys_time;
 } sdlog_cmd_t;
 
-void sdlog_start(uint32_t ch, uint64_t epoch_time)
+void sdlog_start(uint32_t source, uint64_t epoch_time)
 {
     uint64_t current_us = esp_timer_get_time();
     uint32_t total_len  = sizeof(sdlog_cmd_t) + sizeof(current_us);
@@ -102,7 +102,7 @@ void sdlog_start(uint32_t ch, uint64_t epoch_time)
 
     if (res == pdTRUE && p_buf) {
         sdlog_cmd_t *p_cmd = p_buf;
-        p_cmd->ch          = ch;
+        p_cmd->source      = source;
         p_cmd->cmd         = SDLOG_CMD_START;
         p_cmd->length      = sizeof(current_us);
         p_cmd->us_sys_time = current_us;
@@ -116,14 +116,14 @@ void sdlog_start(uint32_t ch, uint64_t epoch_time)
     }
 }
 
-void sdlog_stop(uint32_t ch)
+void sdlog_stop(uint32_t source)
 {
     void *p_buf;
     BaseType_t res = xRingbufferSendAcquire(sdlog_ctrl.sdlog_task_inbuf, &p_buf, sizeof(sdlog_cmd_t), 0);
 
     if (res == pdTRUE && p_buf) {
         sdlog_cmd_t *p_cmd = p_buf;
-        p_cmd->ch          = ch;
+        p_cmd->source      = source;
         p_cmd->cmd         = SDLOG_CMD_STOP;
         p_cmd->length      = 0;
         p_cmd->us_sys_time = esp_timer_get_time();
@@ -134,14 +134,14 @@ void sdlog_stop(uint32_t ch)
     }
 }
 
-void sdlog_write(uint32_t ch, uint32_t type_data, uint32_t len, const void *payload)
+void sdlog_write(uint32_t source, uint32_t type_data, uint32_t len, const void *payload)
 {
     void *p_buf;
     BaseType_t res = xRingbufferSendAcquire(sdlog_ctrl.sdlog_task_inbuf, &p_buf, sizeof(sdlog_cmd_t) + len, 0);
 
     if (res == pdTRUE && p_buf) {
         sdlog_cmd_t *p_cmd = (sdlog_cmd_t *)p_buf;
-        p_cmd->ch          = ch;
+        p_cmd->source      = source;
         p_cmd->cmd         = SDLOG_CMD_WRITE;
         p_cmd->type_data   = type_data;
         p_cmd->length      = len;
@@ -160,30 +160,30 @@ void sdlog_write(uint32_t ch, uint32_t type_data, uint32_t len, const void *payl
 // ----------
 static void _sdlog_task_openfile(sdlog_cmd_t *p_cmd, void *p_payload)
 {
-    sdlog_ctrl_ch_t *p_ch = SDLOG_CH(p_cmd->ch);
-    if (p_ch->fp) {
-        ESP_LOGI(TAG, "ch %s already opened", p_ch->name);
+    sdlog_ctrl_source_t *p_src = SDLOG_SOURCE(p_cmd->source);
+    if (p_src->fp) {
+        ESP_LOGI(TAG, "ch %s already opened", p_src->name);
         return;
     }
 
     // create the output folder
     char full_path[256];
-    snprintf(full_path, sizeof(full_path), "%s/%s/%06" PRIu32, sdlog_ctrl.root, p_ch->name, p_ch->sn);
+    snprintf(full_path, sizeof(full_path), "%s/%s/%06" PRIu32, sdlog_ctrl.root, p_src->name, p_src->sn);
     mkdir(full_path, 0700);
 
     // open log file
     strcat(full_path, "/log.txt");
     ESP_LOGI(TAG, "Opened %s", full_path);
-    p_ch->fp = fopen(full_path, "wb");
+    p_src->fp = fopen(full_path, "wb");
 
-    if (p_ch->fp == NULL) { // check whether file open success
-        ESP_LOGE(TAG, "ch %s file open error", p_ch->name);
+    if (p_src->fp == NULL) { // check whether file open success
+        ESP_LOGE(TAG, "ch %s file open error", p_src->name);
         return;
     }
 
-    p_ch->wbuf = malloc(SDLOG_FILE_BUF_SZ);
-    if (p_ch->wbuf) {
-        setvbuf(p_ch->fp, p_ch->wbuf, _IOFBF, SDLOG_FILE_BUF_SZ); // set the wbuf of the FILE*, it writes to the SD card every 4KB
+    p_src->wbuf = malloc(SDLOG_FILE_BUF_SZ);
+    if (p_src->wbuf) {
+        setvbuf(p_src->fp, p_src->wbuf, _IOFBF, SDLOG_FILE_BUF_SZ); // set the wbuf of the FILE*, it writes to the SD card every 4KB
     }
 
     sdlog_header_t sdlog_header = {0};
@@ -194,17 +194,17 @@ static void _sdlog_task_openfile(sdlog_cmd_t *p_cmd, void *p_payload)
     sdlog_header.sys.header_sz     = 512;
     sdlog_header.sys.us_epoch_time = *(uint64_t *)(p_payload);
     sdlog_header.sys.us_sys_time   = p_cmd->us_sys_time;
-    sdlog_header.sys.fmt           = p_ch->fmt;
+    sdlog_header.sys.fmt           = p_src->fmt;
     strncpy(sdlog_header.sys.board_name, BOARD_NAME, sizeof(sdlog_header.sys.board_name));
     strncpy(sdlog_header.sys.firmware_ver, "20260107", sizeof(sdlog_header.sys.firmware_ver));
     sdlog_header.sys.offset_meta = 512;
     sdlog_header.sys.offset_data = 1024;
 
     // sdlog_header.meta
-    snprintf(sdlog_header.meta.description, sizeof(sdlog_header.meta.description), "Channel: %d, Name: %s", p_cmd->ch, p_ch->name);
+    snprintf(sdlog_header.meta.description, sizeof(sdlog_header.meta.description), "Source: %d, Name: %s", p_cmd->source, p_src->name);
 
     // write to the file
-    if (fwrite(&sdlog_header, sizeof(sdlog_header), 1, p_ch->fp) != 1) {
+    if (fwrite(&sdlog_header, sizeof(sdlog_header), 1, p_src->fp) != 1) {
         assert(0); // TODO: we should handle this error, such as mark the channel ERROR
         return;
     }
@@ -212,29 +212,29 @@ static void _sdlog_task_openfile(sdlog_cmd_t *p_cmd, void *p_payload)
 
 static void _sdlog_task_closefile(sdlog_cmd_t *p_cmd, void *p_payload)
 {
-    sdlog_ctrl_ch_t *p_ch = SDLOG_CH(p_cmd->ch);
+    sdlog_ctrl_source_t *p_src = SDLOG_SOURCE(p_cmd->source);
 
-    if (p_ch->fp) {
-        fclose(p_ch->fp);
-        p_ch->fp = NULL;
-        if (p_ch->wbuf) {
-            free(p_ch->wbuf);
-            p_ch->wbuf = NULL;
+    if (p_src->fp) {
+        fclose(p_src->fp);
+        p_src->fp = NULL;
+        if (p_src->wbuf) {
+            free(p_src->wbuf);
+            p_src->wbuf = NULL;
         }
-        ESP_LOGI(TAG, "CH %s logging stopped", p_ch->name);
+        ESP_LOGI(TAG, "CH %s logging stopped", p_src->name);
 
         sdlog_conv_task_msg_t msg = {
-            .ch = p_cmd->ch,
-            .sn = p_ch->sn,
+            .source = p_cmd->source,
+            .sn     = p_src->sn,
         };
         xQueueSend(sdlog_ctrl.sdlog_conv_task_msgq, &msg, 0); // block time = 0
-        p_ch->sn++;
+        p_src->sn++;
     }
 }
 
 static void _sdlog_task_write(sdlog_cmd_t *p_cmd, void *p_payload)
 {
-    sdlog_ctrl_ch_t *p_ch = SDLOG_CH(p_cmd->ch);
+    sdlog_ctrl_source_t *p_ch = SDLOG_SOURCE(p_cmd->source);
     if (p_ch->fp) {
         // header
         sdlog_data_t sdlog_data = {
@@ -310,9 +310,9 @@ void sdlog_conv_task(void *param)
 
     while (1) {
         if (xQueueReceive(sdlog_ctrl.sdlog_conv_task_msgq, &msg, portMAX_DELAY) == pdPASS) {
-            ESP_LOGI(TAG, "sdlog_conv_task(), ch=%d, sn=%d", msg.ch, msg.sn);
-            ESP_LOGI(TAG, "sdlog_conv_task(), ch=%d, sn=%d", msg.ch, msg.sn);
-            ESP_LOGI(TAG, "sdlog_conv_task(), ch=%d, sn=%d", msg.ch, msg.sn);
+            ESP_LOGI(TAG, "sdlog_conv_task(), ch=%d, sn=%d", msg.source, msg.sn);
+            ESP_LOGI(TAG, "sdlog_conv_task(), ch=%d, sn=%d", msg.source, msg.sn);
+            ESP_LOGI(TAG, "sdlog_conv_task(), ch=%d, sn=%d", msg.source, msg.sn);
         }
     }
 }
@@ -359,13 +359,13 @@ static uint32_t sdlog_find_max_sn(const char *dir_path)
     return max_sn;
 }
 
-static void sdlog_service_create_fd(uint32_t ch)
+static void sdlog_service_create_fd(uint32_t source)
 {
     struct stat st;
     char full_path[256];
 
     // Create log folder if it doesn't exist
-    snprintf(full_path, sizeof(full_path), "%s/%s", sdlog_ctrl.root, SDLOG_CH(ch)->name);
+    snprintf(full_path, sizeof(full_path), "%s/%s", sdlog_ctrl.root, SDLOG_SOURCE(source)->name);
     if (stat(full_path, &st) == -1) {
         mkdir(full_path, 0700); // In FatFS, mode parameter (0700) is actually ignored, but it's a good habit to keep it
         ESP_LOGI(TAG, "Create folder %s", full_path);
@@ -374,7 +374,7 @@ static void sdlog_service_create_fd(uint32_t ch)
     uint32_t max_sn = sdlog_find_max_sn(full_path);
     ESP_LOGI(TAG, "%s max_sn=%" PRIu32, full_path, max_sn);
 
-    SDLOG_CH(ch)->sn = max_sn + 1;
+    SDLOG_SOURCE(source)->sn = max_sn + 1;
 }
 
 void sdlog_service_init(void)

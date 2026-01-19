@@ -38,7 +38,7 @@ static void _sdlog_msg_handle(char *buf)
 
     if (httpd_query_key_value(buf, "sdlog_start", val_str, sizeof(val_str)) == ESP_OK) {
         uint32_t ch = atoi(val_str);
-        if (ch < SDLOG_CH_NUM) {
+        if (ch < SDLOG_SOURCE_NUM) {
             if (httpd_query_key_value(buf, "epoch_time", val_str, sizeof(val_str)) == ESP_OK) {
                 uint64_t epoch = strtoull(val_str, NULL, 10);
                 sdlog_start(ch, epoch);
@@ -49,7 +49,7 @@ static void _sdlog_msg_handle(char *buf)
 
     if (httpd_query_key_value(buf, "sdlog_stop", val_str, sizeof(val_str)) == ESP_OK) {
         int ch = atoi(val_str);
-        if (ch >= 0 && ch < SDLOG_CH_NUM) {
+        if (ch >= 0 && ch < SDLOG_SOURCE_NUM) {
             sdlog_stop(ch);
             ESP_LOGI(TAG, "Stop CH %d", ch);
         }
@@ -137,7 +137,7 @@ esp_err_t uri_index(httpd_req_t *req)
         led_is_on() ? "ON" : "OFF");
 
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
-    sdlog_write(SDLOG_CH_HTTP, SDLOG_DATA_TYPE_STRING, msg_len, resp);
+    sdlog_write(SDLOG_SOURCE_HTTP, SDLOG_DATA_TYPE_STRING, msg_len, resp);
     return ESP_OK;
 }
 
