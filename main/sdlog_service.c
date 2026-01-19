@@ -63,10 +63,11 @@ sdlog_ctrl_t sdlog_ctrl = {
     .root   = SDLOG_ROOT,
     .num_ch = SDLOG_SOURCE_NUM,
     .source = {
-#define SDLOG_SOURCE_REG(_name, _fd_name, _fmt) [SDLOG_SOURCE_##_name] = (sdlog_ctrl_source_t){ \
-                                                    .name = (_fd_name),                         \
-                                                    .fmt  = (_fmt),                             \
-                                                },
+#define SDLOG_SOURCE_REG(_name, _fd_name, _fmt)     \
+    [SDLOG_SOURCE_##_name] = (sdlog_ctrl_source_t){ \
+        .name = (_fd_name),                         \
+        .fmt  = (_fmt),                             \
+    },
 #include "sdlog_source_reg.h"
 #undef SDLOG_SOURCE_REG
     },
@@ -379,8 +380,8 @@ static void sdlog_service_create_fd(uint32_t source)
 
 void sdlog_service_init(void)
 {
-    mkdir(sdlog_ctrl.root, 0700); // create root log folder unconditionally
-
+    // Create root folder, and each module's folder
+    mkdir(sdlog_ctrl.root, 0700);
     for (uint32_t i = 0; i < sdlog_ctrl.num_ch; i++) {
         sdlog_service_create_fd(i);
     }

@@ -11,12 +11,11 @@ enum { // declare what the FMT that the producer is using
 };
 
 // ----------
-// SDLOG_DATA_TYPE
+// SDLOG_FMT_TEST__DATA_TYPE
 // ----------
-
-enum {
-    SDLOG_DATA_TYPE_STRING = 0, // common for all channels
-    // I think these data types were actually per-module dependent, and should not be fully expanded here...
+// FMT_TEXT is officially supported by the framework, so we defined its enum here
+enum sdlog_fmt_text__data_type {
+    SDLOG_FMT_TEXT__STRING = 0,
 };
 
 // ----------

@@ -137,7 +137,7 @@ esp_err_t uri_index(httpd_req_t *req)
         led_is_on() ? "ON" : "OFF");
 
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
-    sdlog_write(SDLOG_SOURCE_HTTP, SDLOG_DATA_TYPE_STRING, msg_len, resp);
+    sdlog_write(SDLOG_SOURCE_HTTP, SDLOG_FMT_TEXT__STRING, msg_len, resp);
     return ESP_OK;
 }
 
