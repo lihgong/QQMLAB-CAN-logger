@@ -131,7 +131,7 @@ esp_err_t uri_index(httpd_req_t *req)
 
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
     char http_log[] = "http req";
-    sdlog_write(SDLOG_SOURCE_HTTP, SDLOG_FMT_TEXT__STRING, sizeof(http_log), http_log);
+    sdlog_write(SDLOG_SOURCE_HTTP, SDLOG_FMT_TEXT__STRING, sizeof(http_log) - 1 /*avoid \0 writes to the buffer*/, http_log);
     return ESP_OK;
 }
 
@@ -185,7 +185,7 @@ static esp_err_t uri_browse_log_recursive(httpd_req_t *req, const char *dir_path
                     ESP_LOGW(TAG, "row_buf[] not sufficient");
                 }
 
-                ret = snprintf(row_buf, sizeof(row_buf), "<td><a href='/download?path=%s' target='_blank'>View</a></td></tr>", entry_path);
+                ret = snprintf(row_buf, sizeof(row_buf), "<td><a href='/download_log?path=%s' target='_blank'>View</a></td></tr>", entry_path);
                 if (ret >= 0 && ret < sizeof(row_buf)) {
                     httpd_resp_send_chunk(req, row_buf, HTTPD_RESP_USE_STRLEN);
                 } else {
@@ -219,6 +219,81 @@ esp_err_t uri_browse_log(httpd_req_t *req)
 }
 
 // ----------
+// URI: /download_log
+// ----------
+esp_err_t uri_download_log(httpd_req_t *req)
+{
+    char buf[192];
+    char path[128];
+
+    // From URL query, extract path parameter
+    // Eg: /download?path=/sdcard/log/http/000023/log.txt
+    if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing Query String");
+        return ESP_FAIL;
+    }
+
+    if (httpd_query_key_value(buf, "path", path, sizeof(path)) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing path parameter");
+        return ESP_FAIL;
+    }
+
+    // Extract the filename
+    const char *filename = strrchr(path, '/');
+    filename             = (filename) ? (filename + 1) : path;
+
+    char header_val[128];
+    int ret = snprintf(header_val, sizeof(header_val), "attachment; filename=\"%s\"", filename);
+    if (ret > 0 && ret <= sizeof(header_val)) {
+        // bypass
+    } else {
+        return ESP_FAIL;
+    }
+
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        ESP_LOGE(TAG, "Failed to open file : %s", path);
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "File not found");
+        return ESP_FAIL;
+    }
+
+    if (strstr(path, ".txt") || strstr(path, ".log")) {
+        httpd_resp_set_type(req, "text/plain; charset=utf-8"); // set to pure text to let brower display it directly
+        httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
+    } else {
+        httpd_resp_set_type(req, "application/octet-stream"); // browser will download it
+        httpd_resp_set_hdr(req, "Content-Disposition", header_val);
+    }
+
+    // 4. 串流發送檔案內容 (每次讀取 1KB)
+    char *chunk = malloc(1024);
+    if (!chunk) {
+        fclose(f);
+        return ESP_ERR_NO_MEM;
+    }
+
+    size_t n;
+    do {
+        n = fread(chunk, 1, 1024, f);
+        if (n > 0) {
+            if (httpd_resp_send_chunk(req, chunk, n) != ESP_OK) {
+                fclose(f);
+                free(chunk);
+                httpd_resp_send_chunk(req, NULL, 0); // 發生錯誤時強制結束
+                return ESP_FAIL;
+            }
+        }
+    } while (n > 0);
+
+    free(chunk);
+    fclose(f);
+
+    // 5. 發送空 Chunk 代表結束
+    httpd_resp_send_chunk(req, NULL, 0);
+    return ESP_OK;
+}
+
+// ----------
 // HTTP server start body
 // ----------
 void http_server_start(void)
@@ -237,6 +312,7 @@ void http_server_start(void)
                 {.uri = "/", .method = HTTP_GET, .handler = uri_index, .user_ctx = NULL},
                 {.uri = "/led_post", .method = HTTP_POST, .handler = uri_led_post, .user_ctx = NULL},
                 {.uri = "/browser_log", .method = HTTP_GET, .handler = uri_browse_log, .user_ctx = NULL},
+                {.uri = "/download_log", .method = HTTP_GET, .handler = uri_download_log, .user_ctx = NULL},
             };
 
             for (uint32_t i = 0; i < sizeof(uri_tbl) / sizeof(httpd_uri_t); i++) {
