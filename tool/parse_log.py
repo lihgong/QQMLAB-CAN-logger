@@ -45,7 +45,7 @@ def parse_sdlog_file(bin_path):
         print(f"------------------------")
 
         # 2. 準備輸出 CSV
-        csv_path = bin_path.replace('.TXT', '.csv').replace('.txt', '.csv')
+        csv_path = bin_path.replace('.BIN', '.csv').replace('.bin', '.csv')
         f.seek(DATA_OFFSET)
         
         with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
@@ -97,5 +97,5 @@ def parse_sdlog_file(bin_path):
 
 if __name__ == "__main__":
     import sys
-    target = sys.argv[1] if len(sys.argv) > 1 else 'LOG.TXT'
+    target = sys.argv[1] if len(sys.argv) > 1 else 'LOG.bin'
     parse_sdlog_file(target)    

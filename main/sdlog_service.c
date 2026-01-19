@@ -34,17 +34,12 @@ static const char *TAG = "SDLOG";
 typedef struct sdlog_ctrl_source_s {
     char *name;
     uint8_t fmt;
-    uint8_t reserved[3];
+    uint8_t def_exporter;
+    uint8_t reserved[2];
     uint32_t sn;
     FILE *fp;
     void *wbuf; // for setvbuf() to hold wbuf to avoid frequently writing to SD card
 } sdlog_ctrl_source_t;
-
-typedef struct sdlog_conv_msg_s {
-    uint8_t source;
-    uint8_t reserved[3];
-    uint32_t sn;
-} sdlog_conv_task_msg_t;
 
 typedef struct sdlog_ctrl_s {
     char *root;
@@ -59,21 +54,33 @@ typedef struct sdlog_ctrl_s {
 
 } sdlog_ctrl_t;
 
+// ----------
+// SDLOG ctrl data structure instance
+// ----------
 sdlog_ctrl_t sdlog_ctrl = {
     .root   = SDLOG_ROOT,
-    .num_ch = SDLOG_SOURCE_NUM,
     .source = {
-#define SDLOG_SOURCE_REG(_name, _fd_name, _fmt)     \
-    [SDLOG_SOURCE_##_name] = (sdlog_ctrl_source_t){ \
-        .name = (_fd_name),                         \
-        .fmt  = (_fmt),                             \
-    },
+#define SDLOG_SOURCE_REG(_name, _fd_name, _fmt, _def_exporter) [SDLOG_SOURCE_##_name] = (sdlog_ctrl_source_t){ \
+                                                                   .name         = (_fd_name),                 \
+                                                                   .fmt          = (_fmt),                     \
+                                                                   .def_exporter = (_def_exporter),            \
+                                                               },
 #include "sdlog_source_reg.h"
 #undef SDLOG_SOURCE_REG
     },
 };
 
 #define SDLOG_SOURCE(x) (&sdlog_ctrl.source[x])
+
+// ----------
+// Interface between SDLOG_TASK/ SDLOG_CONV_TASK
+// ----------
+typedef struct sdlog_conv_msg_s {
+    uint8_t source;
+    uint8_t exporter;
+    uint8_t reserved[2];
+    uint32_t sn;
+} sdlog_conv_task_msg_t;
 
 // ----------
 // Operate API
@@ -173,7 +180,7 @@ static void _sdlog_task_openfile(sdlog_cmd_t *p_cmd, void *p_payload)
     mkdir(full_path, 0700);
 
     // open log file
-    strcat(full_path, "/log.txt");
+    strcat(full_path, "/log.bin");
     ESP_LOGI(TAG, "Opened %s", full_path);
     p_src->fp = fopen(full_path, "wb");
 
@@ -225,8 +232,9 @@ static void _sdlog_task_closefile(sdlog_cmd_t *p_cmd, void *p_payload)
         ESP_LOGI(TAG, "CH %s logging stopped", p_src->name);
 
         sdlog_conv_task_msg_t msg = {
-            .source = p_cmd->source,
-            .sn     = p_src->sn,
+            .source   = p_cmd->source,
+            .sn       = p_src->sn,
+            .exporter = p_src->def_exporter,
         };
         xQueueSend(sdlog_ctrl.sdlog_conv_task_msgq, &msg, 0); // block time = 0
         p_src->sn++;
@@ -304,6 +312,41 @@ void sdlog_task_init(void)
 // ----------
 // SDLOG CONV TASK IMPLEMENTATION
 // ----------
+typedef struct sdlog_exporter_para_s {
+    FILE *fp_in;
+    FILE *fp_out;
+    uint64_t us_epoch_time;
+    uint64_t us_sys_time;
+} sdlog_exporter_para_t;
+
+typedef struct sdlog_exporter_s {
+    uint32_t bmp_fmt_supported;
+    void (*cb)(sdlog_exporter_para_t *p_para);
+    char *fn_output;
+} sdlog_exporter_t;
+
+#define SDLOG_EXPORTER_REG(_name, _bmp_fmt_supported, _fn_output, _cb) extern void(_cb)(sdlog_exporter_para_t * p_para);
+#include "sdlog_exporter_reg.h"
+#undef SDLOG_EXPORTER_REG
+
+sdlog_exporter_t sdlog_exporter[SDLOG_EXPORTER_NUM] = {
+#define SDLOG_EXPORTER_REG(_name, _bmp_fmt_supported, _fn_output, _cb) [SDLOG_EXPORTER_##_name] = (sdlog_exporter_t){ \
+                                                                           .bmp_fmt_supported = (_bmp_fmt_supported), \
+                                                                           .cb                = (_cb),                \
+                                                                           .fn_output         = (_fn_output),         \
+                                                                       },
+#include "sdlog_exporter_reg.h"
+#undef SDLOG_EXPORTER_REG
+};
+
+void sdlog_exporter_text(sdlog_exporter_para_t *p_para)
+{
+    ESP_LOGI(TAG, "us_epoch_time=%" PRId64 ", us_sys_time=%" PRId64, p_para->us_epoch_time, p_para->us_sys_time);
+}
+
+void sdlog_exporter_can(sdlog_exporter_para_t *p_para)
+{
+}
 
 void sdlog_conv_task(void *param)
 {
@@ -311,6 +354,92 @@ void sdlog_conv_task(void *param)
 
     while (1) {
         if (xQueueReceive(sdlog_ctrl.sdlog_conv_task_msgq, &msg, portMAX_DELAY) == pdPASS) {
+            uint32_t step = 1;
+            FILE *fp_in = NULL, *fp_out = NULL;
+            void *iobuf = NULL;
+            do {
+                sdlog_ctrl_source_t *p_src   = SDLOG_SOURCE(msg.source);
+                sdlog_exporter_t *p_exporter = &sdlog_exporter[msg.exporter];
+
+                // check whether the exporter supports incoming format
+                step++; // 2
+                if ((p_exporter->bmp_fmt_supported & (1 << p_src->fmt)) == 0) {
+                    break;
+                }
+
+                // open the input binary file
+                step++; // 3
+                char full_path[256];
+                snprintf(full_path, sizeof(full_path), "%s/%s/%06" PRIu32 "/log.bin", sdlog_ctrl.root, p_src->name, msg.sn);
+                FILE *fp_in = fopen(full_path, "rb");
+                if (fp_in == NULL) {
+                    break;
+                }
+
+                // move the cursor to the desired place
+                step++; // 4
+                if (fseek(fp_in, offsetof(sdlog_header_sys_t, us_epoch_time), SEEK_SET) != 0) {
+                    break;
+                }
+
+                // read us_epoch_time
+                step++; // 5
+                uint64_t us_epoch_time;
+                if (fread(&us_epoch_time, 1, sizeof(us_epoch_time), fp_in) != sizeof(us_epoch_time)) {
+                    break;
+                }
+
+                // read us_sys_time
+                step++; // 6
+                uint64_t us_sys_time;
+                if (fread(&us_sys_time, 1, sizeof(us_sys_time), fp_in) != sizeof(us_sys_time)) {
+                    break;
+                }
+
+                // open the output binary file
+                step++; // 7
+                snprintf(full_path, sizeof(full_path), "%s/%s/%06" PRIu32 "/%s", sdlog_ctrl.root, p_src->name, msg.sn, p_exporter->fn_output);
+                FILE *fp_out = fopen(full_path, "wb");
+                if (fp_out == NULL) {
+                    break;
+                }
+
+                // set the output buffer
+                step++; // 8
+                iobuf = malloc(SDLOG_FILE_BUF_SZ);
+                if (iobuf) {
+                    setvbuf(fp_out, p_src->wbuf, _IOFBF, SDLOG_FILE_BUF_SZ); // set the wbuf of the FILE*, it writes to the SD card every 4KB
+                }
+
+                // Call the converter API
+                step++;
+                sdlog_exporter_text(&(sdlog_exporter_para_t){
+                    // TODO: add return to this API to examine success/fail
+                    .fp_in         = fp_in,
+                    .fp_out        = fp_out,
+                    .us_epoch_time = us_epoch_time,
+                    .us_sys_time   = us_sys_time,
+                });
+
+                // success, set step to 0
+                step = 0;
+            } while (0);
+
+            if (fp_in) {
+                fclose(fp_in);
+                fp_in = NULL;
+            }
+
+            if (fp_out) {
+                fclose(fp_out);
+                fp_out = NULL;
+            }
+
+            if (iobuf) {
+                free(iobuf);
+                iobuf = NULL;
+            }
+
             ESP_LOGI(TAG, "sdlog_conv_task(), ch=%d, sn=%d", msg.source, msg.sn);
             ESP_LOGI(TAG, "sdlog_conv_task(), ch=%d, sn=%d", msg.source, msg.sn);
             ESP_LOGI(TAG, "sdlog_conv_task(), ch=%d, sn=%d", msg.source, msg.sn);
@@ -382,7 +511,7 @@ void sdlog_service_init(void)
 {
     // Create root folder, and each module's folder
     mkdir(sdlog_ctrl.root, 0700);
-    for (uint32_t i = 0; i < sdlog_ctrl.num_ch; i++) {
+    for (uint32_t i = 0; i < SDLOG_SOURCE_NUM; i++) {
         sdlog_service_create_fd(i);
     }
 

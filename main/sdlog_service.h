@@ -22,10 +22,20 @@ enum sdlog_fmt_text__data_type {
 // SDLOG_SOURCE
 // ----------
 enum sdlog_source_e {
-#define SDLOG_SOURCE_REG(_name, _fd_name, _type_ch) SDLOG_SOURCE_##_name,
+#define SDLOG_SOURCE_REG(_name, _fd_name, _fmt, _def_exporter) SDLOG_SOURCE_##_name,
 #include "sdlog_source_reg.h"
 #undef SDLOG_SOURCE_REG
     SDLOG_SOURCE_NUM,
+};
+
+// ----------
+// SDLOG_EXPORTER
+// ----------
+enum sdlog_exporter_e {
+#define SDLOG_EXPORTER_REG(_name, _bmp_fmt_supported, _fn_output, _cb) SDLOG_EXPORTER_##_name,
+#include "sdlog_exporter_reg.h"
+#undef SDLOG_EXPORTER_REG
+    SDLOG_EXPORTER_NUM,
 };
 
 // ----------
