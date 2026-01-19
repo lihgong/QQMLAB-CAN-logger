@@ -4,10 +4,10 @@
 // ----------
 // SDLOG_CH_TYPE
 // ----------
-enum { // we can add more channel type here to distinguish purposes
-    SDLOG_TYPE_CH_HTTP = 0,
-    SDLOG_TYPE_CH_CAN  = 1,
-    SDLOG_TYPE_CH_ADC  = 2,
+enum { // declare what the FMT that the producer is using
+    SDLOG_FMT_TEXT = 0,
+    SDLOG_FMT_CAN  = 1,
+    SDLOG_FMT_ADC  = 2,
 };
 
 // ----------

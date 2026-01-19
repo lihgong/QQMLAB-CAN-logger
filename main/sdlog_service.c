@@ -33,7 +33,7 @@ static const char *TAG = "SDLOG";
 // ----------
 typedef struct sdlog_ctrl_ch_s {
     char *name;
-    uint8_t type_ch;
+    uint8_t fmt;
     uint8_t reserved[3];
     uint32_t sn;
     FILE *fp;
@@ -63,10 +63,10 @@ sdlog_ctrl_t sdlog_ctrl = {
     .root   = SDLOG_ROOT,
     .num_ch = SDLOG_CH_NUM,
     .ch     = {
-#define SDLOG_REG(_name, _fd_name, _type_ch) [SDLOG_CH_##_name] = (sdlog_ctrl_ch_t){ \
-                                                 .name    = (_fd_name),              \
-                                                 .type_ch = (_type_ch),              \
-                                             },
+#define SDLOG_REG(_name, _fd_name, _fmt) [SDLOG_CH_##_name] = (sdlog_ctrl_ch_t){ \
+                                             .name = (_fd_name),                 \
+                                             .fmt  = (_fmt),                     \
+                                         },
 #include "sdlog_reg.h"
 #undef SDLOG_REG
     },
@@ -194,7 +194,7 @@ static void _sdlog_task_openfile(sdlog_cmd_t *p_cmd, void *p_payload)
     sdlog_header.sys.header_sz     = 512;
     sdlog_header.sys.us_epoch_time = *(uint64_t *)(p_payload);
     sdlog_header.sys.us_sys_time   = p_cmd->us_sys_time;
-    sdlog_header.sys.type_ch       = p_ch->type_ch;
+    sdlog_header.sys.fmt           = p_ch->fmt;
     strncpy(sdlog_header.sys.board_name, BOARD_NAME, sizeof(sdlog_header.sys.board_name));
     strncpy(sdlog_header.sys.firmware_ver, "20260107", sizeof(sdlog_header.sys.firmware_ver));
     sdlog_header.sys.offset_meta = 512;

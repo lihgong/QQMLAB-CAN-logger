@@ -24,7 +24,7 @@ typedef struct sdlog_header_sys_s {
             uint64_t us_epoch_time; // The epoch time that the file creates
             uint64_t us_sys_time;   // The system time that the file creates
 
-            uint32_t type_ch; // 0:HTTP, 1:CAN, 2:ADC, ...
+            uint32_t fmt; // 0:HTTP, 1:CAN, 2:ADC, ...
             char board_name[32];
             char firmware_ver[16];
 
