@@ -184,7 +184,7 @@ static esp_err_t uri_browse_log_recursive(httpd_req_t *req, const char *dir_path
             continue;
         }
 
-        char entry_path[64];
+        char entry_path[128];
         int ret = snprintf(entry_path, sizeof(entry_path), "%s/%s", dir_path, entry->d_name);
         if (ret >= 0 && ret < sizeof(entry_path)) {
             if (entry->d_type == DT_DIR) {
@@ -193,7 +193,7 @@ static esp_err_t uri_browse_log_recursive(httpd_req_t *req, const char *dir_path
                 struct stat entry_stat;
                 stat(entry_path, &entry_stat);
 
-                char row_buf[128];
+                char row_buf[192];
                 ret = snprintf(row_buf, sizeof(row_buf), "<tr><td>%s</td><td>%" PRId32 " KB</td>", entry_path, (entry_stat.st_size + 1023) / 1024);
                 if (ret >= 0 && ret < sizeof(row_buf)) {
                     httpd_resp_send_chunk(req, row_buf, HTTPD_RESP_USE_STRLEN);
@@ -271,7 +271,7 @@ esp_err_t uri_download_log(httpd_req_t *req)
 
     char header_val[64];
     int ret = snprintf(header_val, sizeof(header_val), "attachment; filename=\"%s\"", filename);
-    if (ret > 0 && ret <= sizeof(header_val)) {
+    if (ret >= 0 && ret < sizeof(header_val)) {
         // bypass
     } else {
         return ESP_FAIL;
@@ -294,7 +294,7 @@ esp_err_t uri_download_log(httpd_req_t *req)
 
     size_t n;
     do {
-        uint8_t chunk[256]; // stream the file content
+        uint8_t chunk[512]; // stream the file content
         n = fread(chunk, 1, sizeof(chunk), f);
         if (n > 0) {
             if (httpd_resp_send_chunk(req, (const char *)chunk, n) != ESP_OK) {
