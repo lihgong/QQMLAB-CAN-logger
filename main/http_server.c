@@ -1,5 +1,6 @@
 #include <dirent.h>
 #include <sys/stat.h>
+#include <stdarg.h>
 
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -7,6 +8,8 @@
 #include "./board.h"
 
 #include "sdlog_service.h"
+
+#define SDLOG_HTTP_BUF_SZ (128)
 
 // TOP-level HTTP server handle
 httpd_handle_t http_server_h;
@@ -20,11 +23,23 @@ extern uint32_t led_is_on(void);
 // ----------
 // UTILITY FUNCTIONS
 // ----------
+static void http_server_sdlog(char *fmt, ...)
+{
+    char buf[SDLOG_HTTP_BUF_SZ];
+    va_list args;
+    va_start(args, fmt);
+    int32_t ret = vsprintf(buf, fmt, args);
+    if (ret > 0 && ret < sizeof(buf)) {
+        sdlog_write(SDLOG_SOURCE_HTTP, SDLOG_FMT_TEXT__STRING, ret, buf);
+    }
+}
+
 static void _led_msg_handle(char *buf)
 {
     char param[16];
     if (httpd_query_key_value(buf, "led_op", param, sizeof(param)) == ESP_OK) {
         ESP_LOGI(TAG, "_led_msg_handle(), param=%s", param);
+        http_server_sdlog("_led_msg_handle, param=%s", buf);
         if (strcmp(param, "0") == 0) {
             led_op(0);
         } else if (strcmp(param, "1") == 0) {
@@ -86,7 +101,7 @@ esp_err_t uri_index(httpd_req_t *req)
     esp_netif_ip_info_t ip_info;
     esp_netif_get_ip_info(wifi_manager_get_sta_netif(), &ip_info);
 
-    char resp[1536];
+    char resp[384];
     snprintf(resp, sizeof(resp),
         "<html>"
         "<head><title>QQMLAB CAN Logger</title></head>"
@@ -94,44 +109,44 @@ esp_err_t uri_index(httpd_req_t *req)
         "<h3>Status</h3>"
         "<p>Board: %s | IP: " IPSTR " | Free RAM: %lu bytes</p>"
         "<p>Current LED Status: <b>%s</b></p>"
-        "<hr>"
+        "<hr>",
+        BOARD_NAME, IP2STR(&ip_info.ip), esp_get_free_heap_size(), led_is_on() ? "ON" : "OFF");
+    httpd_resp_send_chunk(req, resp, HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send_chunk(req, "<h3>SD Logging Control</h3>"
+                               "<p>"
+                               "  Channel 0 (HTTP): "
+                               "  <button onclick='doStart(0)'>START</button> "
+                               "  <button onclick='doStop(0)'>STOP</button><br>"
+                               "  Channel 1 (CAN): "
+                               "  <button onclick='doStart(1)'>START</button> "
+                               "  <button onclick='doStop(1)'>STOP</button>"
+                               "</p>"
+                               "<script>"
+                               "async function doStart(ch) {"
+                               "  const ts = BigInt(Date.now()) * 1000n;" // retrieve us in computer
+                               "  location.href = `/?sdlog_start=${ch}&epoch_time=${ts.toString()}`;"
+                               "}"
 
-        "<h3>SD Logging Control</h3>"
-        "<p>"
-        "  Channel 0 (HTTP): "
-        "  <button onclick='doStart(0)'>START</button> "
-        "  <button onclick='doStop(0)'>STOP</button><br>"
-        "  Channel 1 (CAN): "
-        "  <button onclick='doStart(1)'>START</button> "
-        "  <button onclick='doStop(1)'>STOP</button>"
-        "</p>"
+                               "async function doStop(ch) {"
+                               "  location.href = `/?sdlog_stop=${ch}`;"
+                               "}"
+                               "</script>"
 
-        "<script>"
-        "async function doStart(ch) {"
-        "  const ts = BigInt(Date.now()) * 1000n;" // 取得電腦微秒時間
-        "  location.href = `/?sdlog_start=${ch}&epoch_time=${ts.toString()}`;"
-        "}"
+                               "<hr>"
+                               "<h3>GET Control Panel</h3>"
+                               "<a href='/?led_op=0'>[ Turn ON ]</a><br>"
+                               "<a href='/?led_op=1'>[ Turn OFF ]</a><br>"
+                               "<a href='/?led_op=2'>[ Toggle ]</a><br>"
+                               "<hr>"
+                               "<h3>Log Download</h3>"
+                               "<a href='/browser_log'>[ Browse Log ]</a><br>"
+                               "</html>",
+        HTTPD_RESP_USE_STRLEN);
 
-        "async function doStop(ch) {"
-        "  location.href = `/?sdlog_stop=${ch}`;"
-        "}"
-        "</script>"
+    httpd_resp_send_chunk(req, NULL, 0); // end-of-transmission
 
-        "<hr>"
-        "<h3>GET Control Panel</h3>"
-        "<a href='/?led_op=0'>[ Turn ON ]</a><br>"
-        "<a href='/?led_op=1'>[ Turn OFF ]</a><br>"
-        "<a href='/?led_op=2'>[ Toggle ]</a><br>"
-        "<hr>"
-        "<h3>Log Download</h3>"
-        "<a href='/browser_log'>[ Browse Log]</a><br>"
-        "</html>",
-        BOARD_NAME, IP2STR(&ip_info.ip), esp_get_free_heap_size(),
-        led_is_on() ? "ON" : "OFF");
+    http_server_sdlog("index page");
 
-    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
-    char http_log[] = "http req";
-    sdlog_write(SDLOG_SOURCE_HTTP, SDLOG_FMT_TEXT__STRING, sizeof(http_log) - 1 /*avoid \0 writes to the buffer*/, http_log);
     return ESP_OK;
 }
 
@@ -141,8 +156,9 @@ esp_err_t uri_index(httpd_req_t *req)
 esp_err_t uri_led_post(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "uri_led_post(), req->content_len=%d", req->content_len);
+    http_server_sdlog("uri_led_post, req_len=%d", req->content_len);
     if (req->content_len) { // If the requested size > 0
-        char buf[512];
+        char buf[256];
         if (httpd_req_recv(req, buf, sizeof(buf))) {
             buf[req->content_len] = '\0';
             ESP_LOGI(TAG, "uri_led_post(), %s", buf);
@@ -168,7 +184,7 @@ static esp_err_t uri_browse_log_recursive(httpd_req_t *req, const char *dir_path
             continue;
         }
 
-        char entry_path[128];
+        char entry_path[64];
         int ret = snprintf(entry_path, sizeof(entry_path), "%s/%s", dir_path, entry->d_name);
         if (ret >= 0 && ret < sizeof(entry_path)) {
             if (entry->d_type == DT_DIR) {
@@ -177,7 +193,7 @@ static esp_err_t uri_browse_log_recursive(httpd_req_t *req, const char *dir_path
                 struct stat entry_stat;
                 stat(entry_path, &entry_stat);
 
-                char row_buf[256];
+                char row_buf[128];
                 ret = snprintf(row_buf, sizeof(row_buf), "<tr><td>%s</td><td>%" PRId32 " KB</td>", entry_path, (entry_stat.st_size + 1023) / 1024);
                 if (ret >= 0 && ret < sizeof(row_buf)) {
                     httpd_resp_send_chunk(req, row_buf, HTTPD_RESP_USE_STRLEN);
@@ -185,7 +201,15 @@ static esp_err_t uri_browse_log_recursive(httpd_req_t *req, const char *dir_path
                     ESP_LOGW(TAG, "row_buf[] not sufficient");
                 }
 
-                ret = snprintf(row_buf, sizeof(row_buf), "<td><a href='/download_log?path=%s' target='_blank'>View</a></td></tr>", entry_path);
+                uint32_t view0_download1;
+                if (strstr(entry->d_name, ".txt") || strstr(entry->d_name, ".log")) {
+                    view0_download1 = 0;
+                } else {
+                    view0_download1 = 1;
+                }
+
+                ret = snprintf(row_buf, sizeof(row_buf), "<td><a href='/download_log?path=%s' target='_blank'>%s</a></td></tr>",
+                    entry_path, (view0_download1 == 0) ? "View" : "Download");
                 if (ret >= 0 && ret < sizeof(row_buf)) {
                     httpd_resp_send_chunk(req, row_buf, HTTPD_RESP_USE_STRLEN);
                 } else {
@@ -198,11 +222,13 @@ static esp_err_t uri_browse_log_recursive(httpd_req_t *req, const char *dir_path
     }
 
     closedir(dir);
+
     return ESP_OK;
 }
 
 esp_err_t uri_browse_log(httpd_req_t *req)
 {
+    http_server_sdlog("/browse_log");
     // Send HTTP header
     httpd_resp_send_chunk(req, "<html><body style='font-family:sans-serif;'>", HTTPD_RESP_USE_STRLEN);
     httpd_resp_send_chunk(req, "<h2>QQMLAB Logger - Browse Files</h2>", HTTPD_RESP_USE_STRLEN);
@@ -223,8 +249,8 @@ esp_err_t uri_browse_log(httpd_req_t *req)
 // ----------
 esp_err_t uri_download_log(httpd_req_t *req)
 {
-    char buf[192];
-    char path[128];
+    char buf[128];
+    char path[64];
 
     // From URL query, extract path parameter
     // Eg: /download?path=/sdcard/log/http/000023/log.txt
@@ -239,21 +265,15 @@ esp_err_t uri_download_log(httpd_req_t *req)
     }
 
     // Extract the filename
+    http_server_sdlog("/uri_download_log, path=%s", path);
     const char *filename = strrchr(path, '/');
     filename             = (filename) ? (filename + 1) : path;
 
-    char header_val[128];
+    char header_val[64];
     int ret = snprintf(header_val, sizeof(header_val), "attachment; filename=\"%s\"", filename);
     if (ret > 0 && ret <= sizeof(header_val)) {
         // bypass
     } else {
-        return ESP_FAIL;
-    }
-
-    FILE *f = fopen(path, "rb");
-    if (!f) {
-        ESP_LOGE(TAG, "Failed to open file : %s", path);
-        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "File not found");
         return ESP_FAIL;
     }
 
@@ -265,31 +285,28 @@ esp_err_t uri_download_log(httpd_req_t *req)
         httpd_resp_set_hdr(req, "Content-Disposition", header_val);
     }
 
-    // 4. 串流發送檔案內容 (每次讀取 1KB)
-    char *chunk = malloc(1024);
-    if (!chunk) {
-        fclose(f);
-        return ESP_ERR_NO_MEM;
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        ESP_LOGE(TAG, "Failed to open file : %s", path);
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "File not found");
+        return ESP_FAIL;
     }
 
     size_t n;
     do {
-        n = fread(chunk, 1, 1024, f);
+        uint8_t chunk[256]; // stream the file content
+        n = fread(chunk, 1, sizeof(chunk), f);
         if (n > 0) {
-            if (httpd_resp_send_chunk(req, chunk, n) != ESP_OK) {
+            if (httpd_resp_send_chunk(req, (const char *)chunk, n) != ESP_OK) {
                 fclose(f);
-                free(chunk);
-                httpd_resp_send_chunk(req, NULL, 0); // 發生錯誤時強制結束
+                httpd_resp_send_chunk(req, NULL, 0); // for terminated if fail
                 return ESP_FAIL;
             }
         }
     } while (n > 0);
-
-    free(chunk);
     fclose(f);
 
-    // 5. 發送空 Chunk 代表結束
-    httpd_resp_send_chunk(req, NULL, 0);
+    httpd_resp_send_chunk(req, NULL, 0); // end-of-transmission
     return ESP_OK;
 }
 
@@ -306,7 +323,7 @@ void http_server_start(void)
         init = 1;
 
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-        config.stack_size     = 8192; // enlarge the stack size to avoid buffer overflow
+        config.stack_size     = 4096; // enlarge the stack size to avoid buffer overflow
         if (httpd_start(&http_server_h, &config) == ESP_OK) {
             httpd_uri_t uri_tbl[] = {
                 {.uri = "/", .method = HTTP_GET, .handler = uri_index, .user_ctx = NULL},
