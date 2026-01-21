@@ -281,7 +281,7 @@ esp_err_t uri_browse_log(httpd_req_t *req)
 static esp_err_t _log_op(httpd_req_t *req, uint32_t op_0download_1delete)
 {
     char buf[128];
-    char path[64];
+    char path[128];
 
     // From URL query, extract path parameter
     // Eg: /download?path=/sdcard/log/http/000023/log.txt
@@ -292,6 +292,12 @@ static esp_err_t _log_op(httpd_req_t *req, uint32_t op_0download_1delete)
 
     if (httpd_query_key_value(buf, "path", path, sizeof(path)) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing path parameter");
+        return ESP_FAIL;
+    }
+
+    if (strncmp(path, "/sdcard/log", 11) != 0) { // ensure the path is always started with correct path
+        ESP_LOGW(TAG, "Access denied: %s", path);
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Access Denied");
         return ESP_FAIL;
     }
 
@@ -340,7 +346,11 @@ static esp_err_t _log_op(httpd_req_t *req, uint32_t op_0download_1delete)
         return ESP_OK;
 
     } else {
-        remove(path);
+        if (remove(path) == 0) {
+            ESP_LOGI(TAG, "Deleted: %s", path);
+        } else {
+            ESP_LOGE(TAG, "Delete failed: %s", path);
+        }
         return _http_redirect_to_index(req, "/browser_log?admin=1");
     }
 }
