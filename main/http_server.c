@@ -326,6 +326,8 @@ static esp_err_t _log_op(httpd_req_t *req, uint32_t op_0download_1delete)
     http_server_sdlog("/uri_download_log, path=%s, op_0download_1delete=%d", path, op_0download_1delete);
 
     if (op_0download_1delete == 0) {
+        char header_val[64]; // the header formating is sent when httpd_resp_send_chunk() is firstly called
+
         if (strstr(path, ".txt") || strstr(path, ".log")) {
             httpd_resp_set_type(req, "text/plain; charset=utf-8"); // set to pure text to let brower display it directly
             httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
@@ -333,7 +335,6 @@ static esp_err_t _log_op(httpd_req_t *req, uint32_t op_0download_1delete)
             const char *filename = strrchr(path, '/');
             filename             = (filename) ? (filename + 1) : path;
 
-            char header_val[64];
             int ret = snprintf(header_val, sizeof(header_val), "attachment; filename=\"%s\"", filename);
             if (ret >= 0 && ret < sizeof(header_val)) {
             } else {
