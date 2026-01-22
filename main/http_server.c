@@ -269,7 +269,7 @@ esp_err_t uri_browse_log(httpd_req_t *req)
     httpd_resp_send_chunk(req, "</tr>", HTTPD_RESP_USE_STRLEN);
 
     // Execute recursive folder scan
-    uri_browse_log_recursive(req, "/sdcard/log", admin_mode);
+    uri_browse_log_recursive(req, MNT_SDCARD "/log", admin_mode);
 
     // Send footer
     httpd_resp_send_chunk(req, "</table><br><a href='/'>Back to Home</a></body></html>", HTTPD_RESP_USE_STRLEN);
@@ -297,7 +297,7 @@ static esp_err_t _log_op(httpd_req_t *req, uint32_t op_0download_1delete)
         return ESP_FAIL;
     }
 
-    if (strncmp(path, "/sdcard/log", 11) != 0) { // ensure the path is always started with correct path
+    if (strncmp(path, MNT_SDCARD "/log", 11) != 0) { // ensure the path is always started with correct path
         ESP_LOGW(TAG, "Access denied: %s", path);
         httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Access Denied");
         return ESP_FAIL;
