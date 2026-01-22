@@ -39,6 +39,7 @@ typedef struct sdlog_ctrl_source_s {
     uint32_t sn;
     FILE *fp;
     void *wbuf; // for setvbuf() to hold wbuf to avoid frequently writing to SD card
+    uint32_t bytes_written;
 } sdlog_ctrl_source_t;
 
 typedef struct sdlog_ctrl_s {
@@ -194,6 +195,8 @@ static void _sdlog_task_openfile(sdlog_cmd_t *p_cmd, void *p_payload)
         setvbuf(p_src->fp, p_src->wbuf, _IOFBF, SDLOG_FILE_BUF_SZ); // set the wbuf of the FILE*, it writes to the SD card every 4KB
     }
 
+    p_src->bytes_written = 0; // reset the statistics
+
     sdlog_header_t sdlog_header = {0};
 
     // sdlog_header.sys
@@ -216,6 +219,7 @@ static void _sdlog_task_openfile(sdlog_cmd_t *p_cmd, void *p_payload)
         assert(0); // TODO: we should handle this error, such as mark the channel ERROR
         return;
     }
+    p_src->bytes_written += sizeof(sdlog_header);
 }
 
 static void _sdlog_task_closefile(sdlog_cmd_t *p_cmd, void *p_payload)
@@ -243,8 +247,8 @@ static void _sdlog_task_closefile(sdlog_cmd_t *p_cmd, void *p_payload)
 
 static void _sdlog_task_write(sdlog_cmd_t *p_cmd, void *p_payload)
 {
-    sdlog_ctrl_source_t *p_ch = SDLOG_SOURCE(p_cmd->source);
-    if (p_ch->fp) {
+    sdlog_ctrl_source_t *p_src = SDLOG_SOURCE(p_cmd->source);
+    if (p_src->fp) {
         // header
         sdlog_data_t sdlog_data = {
             .magic       = 0xA5, // magic word
@@ -253,19 +257,20 @@ static void _sdlog_task_write(sdlog_cmd_t *p_cmd, void *p_payload)
             .payload_len = p_cmd->length,
             .us_sys_time = p_cmd->us_sys_time,
         };
-        fwrite(&sdlog_data, sizeof(sdlog_data), 1, p_ch->fp);
+        fwrite(&sdlog_data, sizeof(sdlog_data), 1, p_src->fp);
 
         // Body
         if (p_cmd->length) {
-            fwrite(p_payload, 1, p_cmd->length, p_ch->fp);
+            fwrite(p_payload, 1, p_cmd->length, p_src->fp);
         }
 
         // padding
         uint32_t pad_len = (p_cmd->length + 7) / 8 * 8 - p_cmd->length;
         if (pad_len) {
             static const uint8_t padding_zeros[8] = {0};
-            fwrite(padding_zeros, 1, pad_len, p_ch->fp);
+            fwrite(padding_zeros, 1, pad_len, p_src->fp);
         }
+        p_src->bytes_written += sizeof(sdlog_data) + p_cmd->length + pad_len;
     }
 }
 
@@ -301,7 +306,7 @@ void sdlog_task_init(void)
         "SDLOG",    // Task name
         4096,       // 4096 words (16KB), we will have a lot of large data transfer in the task, enlarge it
         (void *)0,  // Parameter passed into the task
-        5,          // Priority (FIXME: where can I find the priority table)
+        6,          // Priority (FIXME: where can I find the priority table)
         NULL);      // Task Hanlde, if no need, passes NULL
 
     if (xReturned != pdPASS) {
@@ -559,4 +564,24 @@ void sdlog_service_init(void)
 
     sdlog_task_init();
     sdlog_conv_task_init();
+}
+
+// ----------
+// Status query API, for WEB-UI
+// ----------
+uint32_t sdlog_webui_query(uint32_t source, sdlog_webui_status_t *p_status)
+{
+    // by default, write the null report
+    p_status->is_logging    = 0;
+    p_status->bytes_written = 0;
+
+    if (source < SDLOG_SOURCE_NUM) {
+        sdlog_ctrl_source_t *p_src = SDLOG_SOURCE(source);
+        if (p_src->fp) {
+            p_status->is_logging    = 1;
+            p_status->bytes_written = p_src->bytes_written;
+        }
+    }
+
+    return 0;
 }

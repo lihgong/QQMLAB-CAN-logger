@@ -112,38 +112,58 @@ esp_err_t uri_index(httpd_req_t *req)
         "<hr>",
         BOARD_NAME, IP2STR(&ip_info.ip), esp_get_free_heap_size(), led_is_on() ? "ON" : "OFF");
     httpd_resp_send_chunk(req, resp, HTTPD_RESP_USE_STRLEN);
-    httpd_resp_send_chunk(req, "<h3>SD Logging Control</h3>"
-                               "<p>"
-                               "  Channel 0 (HTTP): "
-                               "  <button onclick='doStart(0)'>START</button> "
-                               "  <button onclick='doStop(0)'>STOP</button><br>"
-                               "  Channel 1 (CAN): "
-                               "  <button onclick='doStart(1)'>START</button> "
-                               "  <button onclick='doStop(1)'>STOP</button>"
-                               "</p>"
-                               "<script>"
-                               "async function doStart(ch) {"
-                               "  const ts = BigInt(Date.now()) * 1000n;" // retrieve us in computer
-                               "  location.href = `/?sdlog_start=${ch}&epoch_time=${ts.toString()}`;"
-                               "}"
 
-                               "async function doStop(ch) {"
-                               "  location.href = `/?sdlog_stop=${ch}`;"
-                               "}"
-                               "</script>"
+    httpd_resp_send_chunk(req, "<h3>SD Logging Control</h3><p>", HTTPD_RESP_USE_STRLEN);
 
-                               "<hr>"
-                               "<h3>Log Download</h3>"
-                               "<a href='/browser_log?admin=0'>[ Browse Log ]</a><br>"
-                               "<a href='/browser_log?admin=1'>[ Browse Log (admin) ]</a><br>"
+    for (int i = 0; i < SDLOG_SOURCE_NUM; i++) {
+        const char *ch_names[] = {"HTTP", "CAN"}; // maybe we can place these name setting in sdlog_service later
+        sdlog_webui_status_t status;
+        sdlog_webui_query(i, &status);
 
-                               "<hr>"
-                               "<h3>LED Control Panel</h3>"
-                               "<a href='/?led_op=0'>[ Turn ON ]</a><br>"
-                               "<a href='/?led_op=1'>[ Turn OFF ]</a><br>"
-                               "<a href='/?led_op=2'>[ Toggle ]</a><br>"
+        // Display icon according to the status
+        const char *status_icon = status.is_logging ? "&#128308; <b style='color:red;'>[REC]</b>" : "&#9898; IDLE";
 
-                               "</html>",
+        snprintf(resp, sizeof(resp),
+            "  Channel %d (%s): %s "
+            "  <button onclick='doStart(%d)' %s>START</button> "
+            "  <button onclick='doStop(%d)' %s>STOP</button> "
+            "  <i>(Written: %" PRIu32 " bytes)</i><br>",
+            i, ch_names[i],
+            status_icon,
+            i, status.is_logging ? "disabled" : "", // Recording, no press START
+            i, status.is_logging ? "" : "disabled", // IDLE, no press STOP
+            status.bytes_written);
+
+        httpd_resp_send_chunk(req, resp, HTTPD_RESP_USE_STRLEN);
+    }
+
+    httpd_resp_send_chunk(req,
+        "</p>"
+        "<script>"
+        "async function doStart(ch) {"
+        "  const ts = BigInt(Date.now()) * 1000n;" // retrieve us in computer
+        "  fetch(`/?sdlog_start=${ch}&epoch_time=${ts.toString()}`).then(() => {"
+        "    setTimeout(() => { location.href = '/'; }, 500);});" // once fetch got response, then wait 0.5ms to refresh
+        "}"
+
+        "async function doStop(ch) {"
+        "  fetch(`/?sdlog_stop=${ch}`).then(() => {"
+        "    setTimeout(() => { location.href = '/'; }, 500);});" // once fetch got response, then wait 0.5ms to refresh
+        "}"
+        "</script>"
+
+        "<hr>"
+        "<h3>Log Download</h3>"
+        "<a href='/browser_log?admin=0'>[ Browse Log ]</a><br>"
+        "<a href='/browser_log?admin=1'>[ Browse Log (admin) ]</a><br>"
+
+        "<hr>"
+        "<h3>LED Control Panel</h3>"
+        "<a href='/?led_op=0'>[ Turn ON ]</a><br>"
+        "<a href='/?led_op=1'>[ Turn OFF ]</a><br>"
+        "<a href='/?led_op=2'>[ Toggle ]</a><br>"
+
+        "</html>",
         HTTPD_RESP_USE_STRLEN);
 
     httpd_resp_send_chunk(req, NULL, 0); // end-of-transmission

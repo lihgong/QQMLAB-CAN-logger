@@ -45,4 +45,13 @@ void sdlog_start(uint32_t source, uint64_t epoch_time);
 void sdlog_stop(uint32_t source);
 void sdlog_write(uint32_t source, uint32_t type_data, uint32_t len, const void *payload);
 
+// ----------
+// WEBUI API
+// ----------
+typedef struct sdlog_webui_status_s {
+    uint32_t is_logging;
+    uint32_t bytes_written;
+} sdlog_webui_status_t;
+uint32_t sdlog_webui_query(uint32_t source, sdlog_webui_status_t *p_status);
+
 #endif // __SDLOG_SERVICE_H__
