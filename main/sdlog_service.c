@@ -349,7 +349,6 @@ sdlog_exporter_t sdlog_exporter[SDLOG_EXPORTER_NUM] = {
 static void _sdlog_exporter_fp_in_padding(FILE *fp_in, uint32_t payload_len)
 {
     uint32_t pad_len = (payload_len + 7) / 8 * 8 - payload_len;
-    ESP_LOGI(TAG, "payload_len=%d, pad_len=%d", payload_len, pad_len);
     if (pad_len) {
         fseek(fp_in, pad_len, SEEK_CUR);
     }
