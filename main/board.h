@@ -9,6 +9,12 @@
 #define MNT_SDCARD "/sdcard" // SD card mount position
 
 // ----------
+// TWAI config
+// ----------
+#define TWAI_RXBUF (128)
+#define TWAI_SPEED (0) // 0:125, 1:500
+
+// ----------
 // BOARD SELECT
 // ----------
 #define TARGET_BOARD_ESP32C3
@@ -35,6 +41,11 @@
 #define SDCARD_SPI_MISO_PIN (2)
 #define SDCARD_SPI_CLK_PIN (6)
 #define SDCARD_SPI_CS_PIN (10)
+
+#define TWAI_EN (1)
+#define TWAI_PIN_TX (0)
+#define TWAI_PIN_RX (1)
+#define TWAI_PIN_STANDBY (3)
 
 #elif defined(TARGET_BOARD_ESP32_CAM)
 #define BOARD_NAME "ESP32-CAM"

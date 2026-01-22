@@ -1,101 +1,107 @@
 import struct
+import sys
 import os
 import csv
 
-# 根據你的 C 結構體定義
-HEADER_SIZE = 1024
-DATA_OFFSET = 1024
-ENTRY_HEADER_SIZE = 16  # packed: B(1) + B(1) + H(2) + I(4) + Q(8)
+# 定義結構大小
+SYS_HEADER_SIZE = 512
+META_HEADER_SIZE = 512
+ENTRY_HEADER_SIZE = 16  # sdlog_data_t
 
-def parse_sdlog_file(bin_path):
-    if not os.path.exists(bin_path):
-        print(f"找不到檔案: {bin_path}")
+def parse_log(file_path):
+    if not os.path.exists(file_path):
+        print(f"找不到檔案: {file_path}")
         return
 
-    with open(bin_path, 'rb') as f:
-        # 1. 解析 1024-byte Global Header (sdlog_header_sys_t)
-        # 對應你的結構: magic[8], ver(I), h_sz(I), epoch(Q), sys_start(Q), type_ch(I), board[32], fw[16]...
-        header_data = f.read(HEADER_SIZE)
-        if len(header_data) < HEADER_SIZE:
+    # 準備 CSV 檔名 (例如 log.bin -> log.csv)
+    csv_file_path = os.path.splitext(file_path)[0] + ".csv"
+
+    with open(file_path, "rb") as f, open(csv_file_path, "w", newline='', encoding='utf-8') as csvfile:
+        # 初始化 CSV Writer
+        fieldnames = ['serial num', 'epoch time', 'relative time', 'stdout']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        # 1. 讀取 System Header
+        sys_header_raw = f.read(SYS_HEADER_SIZE)
+        if len(sys_header_raw) < SYS_HEADER_SIZE:
             return
 
-        # <8s: magic[8]
-        # II: version(4), header_sz(4)
-        # QQ: us_epoch_time(8), us_sys_time(8)
-        # I:  type_ch(4)
-        # 32s16s: board_name[32], firmware_ver[16]
-        header_fmt = '<8sIIQQI32s16s'
-        header_res = struct.unpack_from(header_fmt, header_data)
+        # 解析關鍵時間欄位
+        magic, version, _ = struct.unpack_from("<8sII", sys_header_raw, 0)
+        us_epoch_time, us_sys_time, fmt = struct.unpack_from("<QQI", sys_header_raw, 16)
         
-        magic = header_res[0].decode('ascii').strip('\x00')
-        version = header_res[1]
-        header_sz = header_res[2]
-        epoch_us = header_res[3]
-        sys_start_us = header_res[4]
-        ch_type = header_res[5]  # 0:HTTP, 1:CAN
-        
-        if magic != "QQMLAB":
-            print(f"Magic 錯誤: {magic}")
+        if b"QQMLAB" not in magic:
+            print("無效的 QQMLAB Log 檔案")
             return
 
-        print(f"--- 檔案標頭解析成功 ---")
-        print(f"版本: {version}, 頻道類型: {ch_type} (0:HTTP, 1:CAN)")
-        print(f"基準 Epoch Time: {epoch_us}")
-        print(f"錄製開始 SysTime: {sys_start_us}")
-        print(f"------------------------")
+        # 跳過 Meta Header
+        f.seek(SYS_HEADER_SIZE + META_HEADER_SIZE)
 
-        # 2. 準備輸出 CSV
-        csv_path = bin_path.replace('.BIN', '.csv').replace('.bin', '.csv')
-        f.seek(DATA_OFFSET)
+        # 2. 循環讀取資料
+        count = 0
+        start_timestamp = None
         
-        with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
-            writer = csv.writer(csvfile)
-            # 欄位：相對微秒, 絕對微秒, 子類型, 內容
-            writer.writerow(['rel_time_us', 'abs_epoch_us', 'type_data', 'content_view'])
+        print(f"正在解析 {file_path} 並寫入 {csv_file_path}...")
 
-            count = 0
-            while True:
-                # 3. 讀取 Packed Data Entry Header (16 bytes)
-                # 對應你的結構: magic(B), type(B), res(H), len(I), time(Q)
-                hdr_data = f.read(ENTRY_HEADER_SIZE)
-                if len(hdr_data) < ENTRY_HEADER_SIZE:
-                    break
+        while True:
+            entry_header_raw = f.read(ENTRY_HEADER_SIZE)
+            if len(entry_header_raw) < ENTRY_HEADER_SIZE:
+                break
+
+            magic_byte, type_data, _, _, payload_len, entry_us_sys_time = struct.unpack("<BBBB I Q", entry_header_raw)
+            
+            if magic_byte != 0xA5:
+                break
+
+            payload = f.read(payload_len)
+            
+            # 處理 8-byte padding
+            pad_len = (payload_len + 7) // 8 * 8 - payload_len
+            if pad_len > 0:
+                f.read(pad_len)
+
+            # 時間計算
+            abs_us = us_epoch_time + (entry_us_sys_time - us_sys_time)
+            timestamp_sec = abs_us / 1000000.0
+            
+            # 記錄第一筆時間作為相對時間的基準
+            if start_timestamp is None:
+                start_timestamp = timestamp_sec
+            
+            relative_time = timestamp_sec - start_timestamp
+            count += 1
+
+            # 根據格式產生輸出字串 (stdout 內容)
+            log_content = ""
+            if fmt == 1: # CAN 模式
+                flags, identifier, dlc = struct.unpack_from("<IIB", payload, 0)
+                can_data = payload[9:9+dlc]
+                data_hex = " ".join([f"{b:02X}" for b in can_data])
+                id_fmt = f"{identifier:08X}" if (flags & 0x01) else f"{identifier:03X}"
+                log_content = f"({timestamp_sec:.6f}) can1 {id_fmt} [{dlc}] {data_hex}"
+
+            elif fmt == 0: # TEXT 模式
+                text_data = payload.decode('utf-8', errors='ignore').strip()
+                log_content = f"({timestamp_sec:.6f}) http_log: {text_data}"
+
+            # 同時印到螢幕並寫入 CSV
+            if log_content:
+                # 1. Stdout
+                print(log_content)
                 
-                m_w, t_data, res, p_len, t_us = struct.unpack('<BBHIQ', hdr_data)
+                # 2. CSV
+                writer.writerow({
+                    'serial num': count,
+                    'epoch time': f"{timestamp_sec:.6f}",
+                    'relative time': f"{relative_time:.6f}",
+                    'stdout': log_content
+                })
 
-                if m_w != 0xA5:
-                    # 如果同步位元錯位，這裡會發生問題，通常是因為 padding 沒算對
-                    continue
-
-                # 讀取 Payload
-                payload = f.read(p_len)
-                
-                # 4. 處理 8-byte 對齊 Padding
-                # C code: (p_cmd->length + 7) / 8 * 8 - p_cmd->length
-                pad_len = (p_len + 7) // 8 * 8 - p_len
-                if pad_len > 0:
-                    f.read(pad_len)
-
-                # --- 關鍵計算：時間戳 ---
-                # rel_time = 現在的開機微秒 - 錄製開始時的開機微秒
-                rel_time = t_us - sys_start_us
-                abs_time = epoch_us + rel_time
-
-                # 內容解碼
-                if ch_type == 0: # HTTP
-                    try:
-                        display_content = payload.decode('utf-8', errors='ignore').strip('\x00')
-                    except:
-                        display_content = payload.hex()
-                else:
-                    display_content = payload.hex()
-
-                writer.writerow([rel_time, abs_time, t_data, display_content])
-                count += 1
-
-    print(f"轉檔完成！共處理 {count} 筆資料，輸出至 {csv_path}")
+    print(f"\n解析完成！共處理 {count} 筆資料。")
 
 if __name__ == "__main__":
-    import sys
-    target = sys.argv[1] if len(sys.argv) > 1 else 'LOG.bin'
-    parse_sdlog_file(target)    
+    if len(sys.argv) < 2:
+        print("Usage: python parse_log.py <file.bin>")
+    else:
+        parse_log(sys.argv[1])

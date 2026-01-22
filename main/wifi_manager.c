@@ -31,7 +31,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
     }
 }
 
-void wifi_init_sta(void)
+esp_err_t wifi_sta_init(void)
 {
     // Start WIFI
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA Starting...");
@@ -58,6 +58,8 @@ void wifi_init_sta(void)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
+
+    return ESP_OK;
 }
 
 esp_netif_t *wifi_manager_get_sta_netif(void)

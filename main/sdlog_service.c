@@ -554,7 +554,7 @@ static void sdlog_service_create_fd(uint32_t source)
     SDLOG_SOURCE(source)->sn = max_sn + 1;
 }
 
-void sdlog_service_init(void)
+esp_err_t sdlog_service_init(void)
 {
     // Create root folder, and each module's folder
     mkdir(sdlog_ctrl.root, 0700);
@@ -564,6 +564,8 @@ void sdlog_service_init(void)
 
     sdlog_task_init();
     sdlog_conv_task_init();
+
+    return ESP_OK;
 }
 
 // ----------

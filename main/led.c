@@ -9,11 +9,13 @@
 #define LED_OFF (0)
 #endif
 
-void led_init(void)
+esp_err_t led_init(void)
 {
     gpio_reset_pin(LED_PIN);
     gpio_set_direction(LED_PIN, GPIO_MODE_INPUT_OUTPUT); // use INPUT_OUTPUT to allow read back the status
     gpio_set_level(LED_PIN, LED_OFF);
+
+    return ESP_OK;
 }
 
 void led_op(uint32_t op_0on_1off_2toggle)
