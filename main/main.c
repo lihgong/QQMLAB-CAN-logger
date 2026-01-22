@@ -37,8 +37,8 @@ void app_main(void)
         nvs_init,
         led_init,
         sd_card_init,
-        twai_service_init,
         sdlog_service_init,
+        twai_service_init,
         wifi_sta_init,
     };
 
