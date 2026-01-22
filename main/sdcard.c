@@ -1,9 +1,26 @@
-#include "board.h"
 #include "esp_vfs_fat.h"
+#include "esp_log.h"
 #include "sdmmc_cmd.h"
 #include "driver/sdmmc_host.h"
 
+#include "board.h"
+
 static sdmmc_card_t *sdcard = NULL; // keep global reference to the card
+static const char *TAG      = "SDCARD";
+
+void sd_card_test(void)
+{
+    ESP_LOGI(TAG, "SD Card mounted successfully!\n");
+
+    FILE *f = fopen(MNT_SDCARD "/hello.txt", "w");
+    if (f != NULL) {
+        fprintf(f, "Hello World from QQMLAB CAN LOGGER!\n");
+        fclose(f);
+        ESP_LOGI(TAG, "File written and closed.\n");
+    } else {
+        ESP_LOGI(TAG, "Failed to open file for writing.\n");
+    }
+}
 
 esp_err_t sd_card_init(void)
 {
@@ -48,4 +65,7 @@ esp_err_t sd_card_init(void)
     slot_config.host_id               = host.slot;
     return esp_vfs_fat_sdspi_mount(MNT_SDCARD, &host, &slot_config, &mount_config, &sdcard);
 #endif
+
+    // once the SD card init, test whether we can write it
+    sd_card_test();
 }
