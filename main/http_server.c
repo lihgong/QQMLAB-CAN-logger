@@ -138,7 +138,7 @@ esp_err_t uri_index(httpd_req_t *req)
                                "<a href='/browser_log?admin=1'>[ Browse Log (admin) ]</a><br>"
 
                                "<hr>"
-                               "<h3>GET Control Panel</h3>"
+                               "<h3>LED Control Panel</h3>"
                                "<a href='/?led_op=0'>[ Turn ON ]</a><br>"
                                "<a href='/?led_op=1'>[ Turn OFF ]</a><br>"
                                "<a href='/?led_op=2'>[ Toggle ]</a><br>"

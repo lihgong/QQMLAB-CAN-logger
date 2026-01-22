@@ -13,11 +13,12 @@
 
 #if defined(TARGET_BOARD_ESP32C3)
 #define BOARD_NAME "ESP32-C3-AIRM2M"
-#define GPIO_LED_BREATH (13)
+#define LED_PIN (13)
 
 #elif defined(TARGET_BOARD_ESP32_CAM)
 #define BOARD_NAME "ESP32-CAM"
-#define GPIO_LED_BREATH (33)
+#define LED_PIN (33)
+#define LED_POLARITY_INV
 
 #else
 #error "not support board"
