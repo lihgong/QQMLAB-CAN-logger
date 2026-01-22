@@ -9,6 +9,8 @@
 #include "freertos/task.h"
 #include "freertos/ringbuf.h"
 
+#include "driver/twai.h"
+
 #include "esp_timer.h"
 #include "esp_log.h"
 #include "esp_check.h"
@@ -393,9 +395,50 @@ esp_err_t sdlog_exporter_text(sdlog_exporter_para_t *p_para)
 
 esp_err_t sdlog_exporter_can(sdlog_exporter_para_t *p_para)
 {
+    // Move cursor to the begin-of-data
+    if (fseek(p_para->fp_in, sizeof(sdlog_header_t), SEEK_SET) != 0) { // skip gloal header
+        return ESP_FAIL;
+    }
+
+    sdlog_data_t entry;
+    while (fread(&entry, sizeof(sdlog_data_t), 1, p_para->fp_in) == 1) {
+        if (entry.magic != 0xA5) {
+            ESP_LOGE(TAG, "CAN Exporter: Magic mismatch!");
+            return ESP_FAIL;
+        }
+
+        twai_message_t can_msg;
+        if (fread(&can_msg, sizeof(twai_message_t), 1, p_para->fp_in) != 1) {
+            break;
+        }
+
+        // Convert the CAN bytes to the string
+        char data_hex[32]; // "00 00 00 00 00 00 00 00"
+        char *p = data_hex;
+        for (int i = 0; i < can_msg.data_length_code; i++) {
+            p += sprintf(p, "%02X ", can_msg.data[i]);
+        }
+        if (can_msg.data_length_code) {
+            *(p - 1) = '\0'; // if we generated any byte aboves, then there would one extra space
+        }
+
+        // String format to candump.txt
+        // Format: (1587129135.759626) can1 325 [8] 00 00 00 00 00 00 00 00
+        uint64_t abs_us = p_para->us_epoch_time + (entry.us_sys_time - p_para->us_sys_time); // calculate absolute micro-second
+        fprintf(p_para->fp_out, "(%llu.%06llu) can1 %03lX [%d] %s\n",
+            (abs_us / 1000000), (abs_us % 1000000), can_msg.identifier, can_msg.data_length_code, data_hex);
+
+        // If entry.payload is larger than twai_message_t, skip remaining bytes
+        if (entry.payload_len > sizeof(twai_message_t)) {
+            fseek(p_para->fp_in, entry.payload_len - sizeof(twai_message_t), SEEK_CUR);
+        }
+
+        // Handle padding, 8byte align
+        _sdlog_exporter_fp_in_padding(p_para->fp_in, entry.payload_len);
+    }
+
     return ESP_OK;
 }
-
 void sdlog_conv_task(void *param)
 {
     sdlog_conv_task_msg_t msg;
