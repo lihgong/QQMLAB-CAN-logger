@@ -1,5 +1,6 @@
 #include "driver/gpio.h"
-#include "./board.h"
+#include "board.h"
+#include "led.h"
 
 #if defined(LED_POLARITY_INV)
 #define LED_ON (0)

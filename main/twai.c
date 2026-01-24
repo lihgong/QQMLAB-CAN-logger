@@ -2,6 +2,7 @@
 #include "esp_log.h"
 #include "sdlog_service.h"
 #include "board.h"
+#include "led.h"
 
 static const char *TAG = "TWAI";
 
@@ -13,6 +14,10 @@ static void twai_rx_task(void *arg)
     while (1) {
         if (twai_receive(&msg, portMAX_DELAY) == ESP_OK) { // Wait for CAN packet arriving
             sdlog_write(SDLOG_SOURCE_CAN, /*data_type*/ 0, sizeof(msg), &msg);
+
+            // Make LED toggle to show the packet arriving
+            led_op(/*op_0on_1off_2toggle*/ 2);
+
             // Observe CAN packet in Console
             // ESP_LOGI(TAG, "ID: 0x%03lX DLC:%d Data: %02x %02x...", msg.identifier, msg.data_length_code, msg.data[0], msg.data[1]);
         }
