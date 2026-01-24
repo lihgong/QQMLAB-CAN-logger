@@ -25,6 +25,8 @@ static const char *TAG = "SDLOG";
 #define SDLOG_TASK_INBUF_SZ (32768)
 #define SDLOG_FILE_BUF_SZ (4096)
 
+#define SDLOG_CONV_QUEUE_DEPTH (8)
+
 // FIXME: in the sdlog service, we may encounter that sdcard service is not ready
 // Or we may encounter the SD card inserted (currently, it will reboot forever)
 // Handle them in the future. For example, if the SD card not inserted, I expect not hang
@@ -79,10 +81,8 @@ sdlog_ctrl_t sdlog_ctrl = {
 // Interface between SDLOG_TASK/ SDLOG_CONV_TASK
 // ----------
 typedef struct sdlog_conv_msg_s {
-    uint8_t source;
-    uint8_t exporter;
-    uint8_t reserved[2];
-    uint32_t sn;
+    char log_path[64];
+    // in the future, we can extend this interface to allow users specifying the desired converter
 } sdlog_conv_task_msg_t;
 
 // ----------
@@ -237,12 +237,10 @@ static void _sdlog_task_closefile(sdlog_cmd_t *p_cmd, void *p_payload)
         }
         ESP_LOGI(TAG, "CH %s logging stopped", p_src->name);
 
-        sdlog_conv_task_msg_t msg = {
-            .source   = p_cmd->source,
-            .sn       = p_src->sn,
-            .exporter = p_src->def_exporter,
-        };
+        sdlog_conv_task_msg_t msg;
+        snprintf(msg.log_path, sizeof(msg.log_path), "%s/%s/%06" PRIu32 "/log.bin", sdlog_ctrl.root, p_src->name, p_src->sn);
         xQueueSend(sdlog_ctrl.sdlog_conv_task_msgq, &msg, 0); // block time = 0
+
         p_src->sn++;
     }
 }
@@ -438,9 +436,17 @@ esp_err_t sdlog_exporter_can(sdlog_exporter_para_t *p_para)
 
     return ESP_OK;
 }
+
+static uint8_t sdlog_conv_def_exporter[] = {
+    [SDLOG_FMT_TEXT] = SDLOG_EXPORTER_TEXT,
+    [SDLOG_FMT_CAN]  = SDLOG_EXPORTER_CAN,
+    [SDLOG_FMT_ADC]  = SDLOG_EXPORTER_TEXT, // actually not supported yet
+};
+
 void sdlog_conv_task(void *param)
 {
     sdlog_conv_task_msg_t msg;
+    uint64_t conv_time;
 
     while (1) {
         if (xQueueReceive(sdlog_ctrl.sdlog_conv_task_msgq, &msg, portMAX_DELAY) == pdPASS) {
@@ -448,68 +454,67 @@ void sdlog_conv_task(void *param)
             FILE *fp_in = NULL, *fp_out = NULL;
             void *iobuf = NULL;
             do {
-                sdlog_ctrl_source_t *p_src   = SDLOG_SOURCE(msg.source);
-                sdlog_exporter_t *p_exporter = &sdlog_exporter[msg.exporter];
+                sdlog_header_sys_t sdlog_header;
 
-                // check whether the exporter supports incoming format
-                step++; // 2
-                if ((p_exporter->bmp_fmt_supported & (1 << p_src->fmt)) == 0) {
+                // Open the binary file
+                step++;
+                if ((fp_in = fopen(msg.log_path, "rb")) == NULL) {
                     break;
                 }
 
-                // open the input binary file
-                step++; // 3
+                // Read whole header image locally,
+                step++;
+                if (fread(&sdlog_header, 1, sizeof(sdlog_header), fp_in) != sizeof(sdlog_header)) {
+                    break;
+                }
+
+                // Read fmt, retrieve the exporter pointer, and check whether the format is supported
+                step++;
+                uint32_t fmt                 = sdlog_header.fmt;
+                sdlog_exporter_t *p_exporter = &sdlog_exporter[sdlog_conv_def_exporter[fmt]];
+                if ((p_exporter->bmp_fmt_supported & (1 << fmt)) == 0) {
+                    break;
+                }
+
+                // Generate the output filename
+                step++;
+                char *last_slash = strrchr(msg.log_path, '/');
+                if (last_slash == NULL) {
+                    break;
+                }
                 char full_path[256];
-                snprintf(full_path, sizeof(full_path), "%s/%s/%06" PRIu32 "/log.bin", sdlog_ctrl.root, p_src->name, msg.sn);
-                FILE *fp_in = fopen(full_path, "rb");
-                if (fp_in == NULL) {
+                size_t dir_len = last_slash - msg.log_path + 1; // calculate the dir length (including last '/')
+                if (dir_len < sizeof(msg.log_path)) {
+                    memcpy(full_path, msg.log_path, dir_len); // copy the directory path
+                    full_path[dir_len] = '\0';
+                    strcat(full_path, p_exporter->fn_output); // append the filename
+                }
+
+                // Open the output file & allocate file buffer
+                step++;
+                if ((fp_out = fopen(full_path, "wb")) == NULL) {
                     break;
                 }
 
-                // move the cursor to the desired place
-                step++; // 4
-                if (fseek(fp_in, offsetof(sdlog_header_sys_t, us_epoch_time), SEEK_SET) != 0) {
-                    break;
-                }
-
-                // read us_epoch_time
-                step++; // 5
-                uint64_t us_epoch_time;
-                if (fread(&us_epoch_time, 1, sizeof(us_epoch_time), fp_in) != sizeof(us_epoch_time)) {
-                    break;
-                }
-
-                // read us_sys_time
-                step++; // 6
-                uint64_t us_sys_time;
-                if (fread(&us_sys_time, 1, sizeof(us_sys_time), fp_in) != sizeof(us_sys_time)) {
-                    break;
-                }
-
-                // open the output binary file
-                step++; // 7
-                snprintf(full_path, sizeof(full_path), "%s/%s/%06" PRIu32 "/%s", sdlog_ctrl.root, p_src->name, msg.sn, p_exporter->fn_output);
-                fp_out = fopen(full_path, "wb");
-                if (fp_out == NULL) {
-                    break;
-                }
-
-                // set the output file
-                step++; // 8
+                // set the output file buffer
+                step++;
                 iobuf = malloc(SDLOG_FILE_BUF_SZ);
                 if (iobuf) {
                     setvbuf(fp_out, iobuf, _IOFBF, SDLOG_FILE_BUF_SZ); // set the wbuf of the FILE*, it writes to the SD card every 4KB
                 }
 
                 // Call the converter API
-                step++; // 9
+                step++;
+                uint64_t conv_begin = esp_timer_get_time();
+
                 esp_err_t conv_result = p_exporter->cb(&(sdlog_exporter_para_t){
-                    // TODO: add return to this API to examine success/fail
                     .fp_in         = fp_in,
                     .fp_out        = fp_out,
-                    .us_epoch_time = us_epoch_time,
-                    .us_sys_time   = us_sys_time,
+                    .us_epoch_time = sdlog_header.us_epoch_time,
+                    .us_sys_time   = sdlog_header.us_sys_time,
                 });
+
+                conv_time = esp_timer_get_time() - conv_begin;
                 if (conv_result != ESP_OK) {
                     break;
                 }
@@ -531,14 +536,14 @@ void sdlog_conv_task(void *param)
                 iobuf = NULL;
             }
 
-            ESP_LOGI(TAG, "sdlog_conv_task(), ch=%d, sn=%d, step=%d", msg.source, msg.sn, step);
+            ESP_LOGI(TAG, "sdlog_conv_task(), fn=%s, status=%s(%d) conv_time=%lld", msg.log_path, (step == 0) ? "Success" : "Fail", step, conv_time);
         }
     }
 }
 
 void sdlog_conv_task_init(void)
 {
-    sdlog_ctrl.sdlog_conv_task_msgq = xQueueCreate(16, sizeof(sdlog_conv_task_msg_t));
+    sdlog_ctrl.sdlog_conv_task_msgq = xQueueCreate(SDLOG_CONV_QUEUE_DEPTH, sizeof(sdlog_conv_task_msg_t));
     assert(sdlog_ctrl.sdlog_conv_task_msgq);
 
     // sdlog_conv_task_msg_t
