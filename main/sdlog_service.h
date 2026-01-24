@@ -2,15 +2,6 @@
 #define __SDLOG_SERVICE_H__
 
 // ----------
-// SDLOG_FMT
-// ----------
-enum { // declare what the FMT that the producer is using
-    SDLOG_FMT_TEXT = 0,
-    SDLOG_FMT_CAN  = 1,
-    SDLOG_FMT_ADC  = 2,
-};
-
-// ----------
 // SDLOG_FMT_TEST__DATA_TYPE
 // ----------
 // FMT_TEXT is officially supported by the framework, so we defined its enum here
@@ -22,20 +13,10 @@ enum sdlog_fmt_text__data_type {
 // SDLOG_SOURCE
 // ----------
 enum sdlog_source_e {
-#define SDLOG_SOURCE_REG(_name, _fd_name, _fmt, _def_exporter) SDLOG_SOURCE_##_name,
+#define SDLOG_SOURCE_REG(_name, _fd_name, _fmt) SDLOG_SOURCE_##_name,
 #include "sdlog_source_reg.h"
 #undef SDLOG_SOURCE_REG
     SDLOG_SOURCE_NUM,
-};
-
-// ----------
-// SDLOG_EXPORTER
-// ----------
-enum sdlog_exporter_e {
-#define SDLOG_EXPORTER_REG(_name, _bmp_fmt_supported, _fn_output, _cb) SDLOG_EXPORTER_##_name,
-#include "sdlog_exporter_reg.h"
-#undef SDLOG_EXPORTER_REG
-    SDLOG_EXPORTER_NUM,
 };
 
 // ----------
