@@ -54,7 +54,7 @@ esp_err_t sd_card_init(void)
         .sclk_io_num     = SDCARD_SPI_CLK_PIN,
         .quadwp_io_num   = -1,
         .quadhd_io_num   = -1,
-        .max_transfer_sz = 4000,
+        .max_transfer_sz = 4096,
     };
     esp_err_t ret = spi_bus_initialize(host.slot, &bus_cfg, SPI_DMA_CH_AUTO);
     if (ret != ESP_OK)

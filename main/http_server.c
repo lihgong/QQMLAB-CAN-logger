@@ -9,6 +9,7 @@
 #include "board.h"
 #include "led.h"
 #include "sdlog_service.h"
+#include "sdlog_conv.h"
 
 #define SDLOG_HTTP_BUF_SZ (128)
 
@@ -153,8 +154,8 @@ esp_err_t uri_index(httpd_req_t *req)
 
         "<hr>"
         "<h3>Log Download</h3>"
-        "<a href='/browser_log?admin=0'>[ Browse Log ]</a><br>"
-        "<a href='/browser_log?admin=1'>[ Browse Log (admin) ]</a><br>"
+        "<a href='/log_browse?admin=0'>[ Browse Log ]</a><br>"
+        "<a href='/log_browse?admin=1'>[ Browse Log (admin) ]</a><br>"
 
         "<hr>"
         "<h3>LED Control Panel</h3>"
@@ -232,7 +233,7 @@ static esp_err_t uri_browse_log_recursive(httpd_req_t *req, const char *dir_path
                     view0_download1 = 1;
                 }
 
-                ret = snprintf(row_buf, sizeof(row_buf), "<td><a href='/download_log?path=%s' target='_blank'>%s</a></td>",
+                ret = snprintf(row_buf, sizeof(row_buf), "<td><a href='/log_download?path=%s' target='_blank'>%s</a></td>",
                     entry_path, (view0_download1 == 0) ? "View" : "Download");
                 if (ret >= 0 && ret < sizeof(row_buf)) {
                     httpd_resp_send_chunk(req, row_buf, HTTPD_RESP_USE_STRLEN);
@@ -241,15 +242,23 @@ static esp_err_t uri_browse_log_recursive(httpd_req_t *req, const char *dir_path
                 }
 
                 if (admin_mode) {
-                    ret = snprintf(row_buf, sizeof(row_buf), "<td><a href='/remove_log?path=%s'>Remove</a></td>", entry_path);
+                    ret = snprintf(row_buf, sizeof(row_buf), "<td><a href='/log_conv?path=%s'>Conv</a></td>", entry_path);
+                    if (ret >= 0 && ret < sizeof(row_buf)) {
+                        httpd_resp_send_chunk(req, row_buf, HTTPD_RESP_USE_STRLEN);
+                    } else {
+                        ESP_LOGW(TAG, "row_buf[] not sufficient");
+                    }
+
+                    ret = snprintf(row_buf, sizeof(row_buf), "<td><a href='/log_remove?path=%s'>Remove</a></td>", entry_path);
                     if (ret >= 0 && ret < sizeof(row_buf)) {
                         httpd_resp_send_chunk(req, row_buf, HTTPD_RESP_USE_STRLEN);
                     } else {
                         ESP_LOGW(TAG, "row_buf[] not sufficient");
                     }
                 } else {
-                    httpd_resp_send_chunk(req, "<td></td>", HTTPD_RESP_USE_STRLEN);
+                    httpd_resp_send_chunk(req, "<td></td><td></td>", HTTPD_RESP_USE_STRLEN);
                 }
+
                 httpd_resp_send_chunk(req, "</tr>", HTTPD_RESP_USE_STRLEN);
             }
         } else {
@@ -284,7 +293,7 @@ esp_err_t uri_browse_log(httpd_req_t *req)
     httpd_resp_send_chunk(req, "<h2>QQMLAB Logger - Browse Files</h2>", HTTPD_RESP_USE_STRLEN);
     httpd_resp_send_chunk(req, "<table border='1' cellpadding='5' style='border-collapse:collapse;'>", HTTPD_RESP_USE_STRLEN);
     httpd_resp_send_chunk(req, "<tr bgcolor='#ddd'>", HTTPD_RESP_USE_STRLEN);
-    httpd_resp_send_chunk(req, "<th>File Path</th> <th>Size</th> <th>Action</th> <th>Remove</th>", HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send_chunk(req, "<th>File Path</th> <th>Size</th> <th>Action</th> <th>Conv</th> <th>Remove</th>", HTTPD_RESP_USE_STRLEN);
     httpd_resp_send_chunk(req, "</tr>", HTTPD_RESP_USE_STRLEN);
 
     // Execute recursive folder scan
@@ -297,9 +306,9 @@ esp_err_t uri_browse_log(httpd_req_t *req)
 }
 
 // ----------
-// URI: /download_log
+// URI: /log_download
 // ----------
-static esp_err_t _log_op(httpd_req_t *req, uint32_t op_0download_1delete)
+static esp_err_t _log_op(httpd_req_t *req, uint32_t op_0download_1delete_2conv)
 {
     char buf[128];
     char path[128];
@@ -322,9 +331,9 @@ static esp_err_t _log_op(httpd_req_t *req, uint32_t op_0download_1delete)
         return ESP_FAIL;
     }
 
-    http_server_sdlog("/uri_download_log, path=%s, op_0download_1delete=%d", path, op_0download_1delete);
+    http_server_sdlog("/uri_log_download, path=%s, op_0download_1delete_2conv=%d", path, op_0download_1delete_2conv);
 
-    if (op_0download_1delete == 0) {
+    if (op_0download_1delete_2conv == 0) {
         char header_val[64]; // the header formating is sent when httpd_resp_send_chunk() is firstly called
 
         if (strstr(path, ".txt") || strstr(path, ".log")) {
@@ -367,24 +376,35 @@ static esp_err_t _log_op(httpd_req_t *req, uint32_t op_0download_1delete)
         httpd_resp_send_chunk(req, NULL, 0); // end-of-transmission
         return ESP_OK;
 
-    } else {
+    } else if (op_0download_1delete_2conv == 1) {
         if (remove(path) == 0) {
             ESP_LOGI(TAG, "Deleted: %s", path);
         } else {
             ESP_LOGE(TAG, "Delete failed: %s", path);
         }
-        return _http_redirect_to_index(req, "/browser_log?admin=1");
+        return _http_redirect_to_index(req, "/log_browse?admin=1");
+
+    } else if (op_0download_1delete_2conv == 2) {
+        sdlog_conv_trig(path);
+        return _http_redirect_to_index(req, "/log_browse?admin=1");
+    } else {
+        return _http_redirect_to_index(req, "/log_browse");
     }
 }
 
-esp_err_t uri_download_log(httpd_req_t *req)
+esp_err_t uri_log_download(httpd_req_t *req)
 {
     return _log_op(req, 0); // download
 }
 
-esp_err_t uri_remove_log(httpd_req_t *req)
+esp_err_t uri_log_remove(httpd_req_t *req)
 {
     return _log_op(req, 1); // remove
+}
+
+esp_err_t uri_log_conv(httpd_req_t *req)
+{
+    return _log_op(req, 2); // remove
 }
 
 // ----------
@@ -405,9 +425,10 @@ void http_server_start(void)
             httpd_uri_t uri_tbl[] = {
                 {.uri = "/", .method = HTTP_GET, .handler = uri_index, .user_ctx = NULL},
                 {.uri = "/led_post", .method = HTTP_POST, .handler = uri_led_post, .user_ctx = NULL},
-                {.uri = "/browser_log", .method = HTTP_GET, .handler = uri_browse_log, .user_ctx = NULL},
-                {.uri = "/download_log", .method = HTTP_GET, .handler = uri_download_log, .user_ctx = NULL},
-                {.uri = "/remove_log", .method = HTTP_GET, .handler = uri_remove_log, .user_ctx = NULL},
+                {.uri = "/log_browse", .method = HTTP_GET, .handler = uri_browse_log, .user_ctx = NULL},
+                {.uri = "/log_download", .method = HTTP_GET, .handler = uri_log_download, .user_ctx = NULL},
+                {.uri = "/log_remove", .method = HTTP_GET, .handler = uri_log_remove, .user_ctx = NULL},
+                {.uri = "/log_conv", .method = HTTP_GET, .handler = uri_log_conv, .user_ctx = NULL},
             };
 
             for (uint32_t i = 0; i < sizeof(uri_tbl) / sizeof(httpd_uri_t); i++) {

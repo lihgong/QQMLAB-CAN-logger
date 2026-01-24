@@ -22,7 +22,7 @@
 static const char *TAG = "SDLOG_CONV";
 
 #define SDLOG_CONV_QUEUE_DEPTH (8)
-#define SDLOG_CONV_FILE_BUF_SZ (4096)
+#define SDLOG_CONV_FILE_BUF_SZ (8192)
 
 QueueHandle_t sdlog_conv_task_msgq;
 
@@ -70,7 +70,8 @@ static void _sdlog_exporter_fp_in_padding(FILE *fp_in, uint32_t payload_len)
 {
     uint32_t pad_len = (payload_len + 7) / 8 * 8 - payload_len;
     if (pad_len) {
-        fseek(fp_in, pad_len, SEEK_CUR);
+        char buf[8];
+        fread(buf, pad_len, 1, fp_in);
     }
 }
 
@@ -112,6 +113,25 @@ esp_err_t sdlog_exporter_text(sdlog_exporter_para_t *p_para)
     return ESP_OK;
 }
 
+// ----------
+// EXPORTER: CAN
+// ----------
+
+// Declare a data structure to merge data/payload read at the same time
+// - sdlog_data_t
+// - twai_message_t
+// - padding
+
+struct twai_data_entry_payload_s {
+    sdlog_data_t h;
+    twai_message_t can_msg;
+};
+
+struct twai_data_entry_s {
+    struct twai_data_entry_payload_s payload;
+    uint8_t padding[sizeof(struct twai_data_entry_payload_s) % 8];
+};
+
 esp_err_t sdlog_exporter_can(sdlog_exporter_para_t *p_para)
 {
     // Move cursor to the begin-of-data
@@ -119,41 +139,38 @@ esp_err_t sdlog_exporter_can(sdlog_exporter_para_t *p_para)
         return ESP_FAIL;
     }
 
-    sdlog_data_t entry;
-    while (fread(&entry, sizeof(sdlog_data_t), 1, p_para->fp_in) == 1) {
-        if (entry.magic != 0xA5) {
+    struct twai_data_entry_s buf;
+    sdlog_data_t *p_h     = &buf.payload.h;
+    twai_message_t *p_can = &buf.payload.can_msg;
+
+    while (fread(&buf, sizeof(buf), 1, p_para->fp_in) == 1) {
+        if (p_h->magic != 0xA5) {
             ESP_LOGE(TAG, "CAN Exporter: Magic mismatch!");
             return ESP_FAIL;
         }
 
-        twai_message_t can_msg;
-        if (fread(&can_msg, sizeof(twai_message_t), 1, p_para->fp_in) != 1) {
-            break;
+        char line_buf[128];
+
+        uint64_t abs_us = p_para->us_epoch_time + (p_h->us_sys_time - p_para->us_sys_time); // calculate absolute micro-second
+        uint32_t len    = snprintf(line_buf, sizeof(line_buf), "(%llu.%06llu) can1 %03lX [%d] ",
+               (abs_us / 1000000), (abs_us % 1000000), p_can->identifier, p_can->data_length_code);
+
+        char *p = line_buf + len;
+        for (uint32_t i = 0; i < p_can->data_length_code; i++) {
+            static const char hex_table[] = "0123456789ABCDEF";
+
+            uint8_t b = p_can->data[i];
+            *p++      = hex_table[(b >> 4) & 0xF];
+            *p++      = hex_table[(b >> 0) & 0xF];
+            *p++      = ' ';
         }
 
-        // Convert the CAN bytes to the string
-        char data_hex[32]; // "00 00 00 00 00 00 00 00"
-        char *p = data_hex;
-        for (int i = 0; i < can_msg.data_length_code; i++) {
-            p += sprintf(p, "%02X ", can_msg.data[i]);
-        }
-        if (can_msg.data_length_code) {
-            *(p - 1) = '\0'; // if we generated any byte aboves, then there would one extra space
+        if (p_can->data_length_code) {
+            p--; // the code above generated one redundant space, if any bytes available, remove it
         }
 
-        // String format to candump.txt
-        // Format: (1587129135.759626) can1 325 [8] 00 00 00 00 00 00 00 00
-        uint64_t abs_us = p_para->us_epoch_time + (entry.us_sys_time - p_para->us_sys_time); // calculate absolute micro-second
-        fprintf(p_para->fp_out, "(%llu.%06llu) can1 %03lX [%d] %s\n",
-            (abs_us / 1000000), (abs_us % 1000000), can_msg.identifier, can_msg.data_length_code, data_hex);
-
-        // If entry.payload is larger than twai_message_t, skip remaining bytes
-        if (entry.payload_len > sizeof(twai_message_t)) {
-            fseek(p_para->fp_in, entry.payload_len - sizeof(twai_message_t), SEEK_CUR);
-        }
-
-        // Handle padding, 8byte align
-        _sdlog_exporter_fp_in_padding(p_para->fp_in, entry.payload_len);
+        *p++ = '\n';
+        fwrite(line_buf, p - line_buf, 1, p_para->fp_out);
     }
 
     return ESP_OK;
@@ -168,13 +185,15 @@ static uint8_t sdlog_conv_def_exporter[] = {
 static void sdlog_conv_task(void *param)
 {
     sdlog_conv_task_msg_t msg;
-    uint64_t conv_time;
 
     while (1) {
         if (xQueueReceive(sdlog_conv_task_msgq, &msg, portMAX_DELAY) == pdPASS) {
-            uint32_t step = 1;
-            FILE *fp_in = NULL, *fp_out = NULL;
-            void *iobuf = NULL;
+            uint32_t step      = 1;
+            uint64_t conv_time = 0;
+            FILE *fp_in        = NULL;
+            FILE *fp_out       = NULL;
+            void *iobuf_in     = NULL;
+            void *iobuf_out    = NULL;
             do {
                 sdlog_header_sys_t sdlog_header;
 
@@ -183,10 +202,19 @@ static void sdlog_conv_task(void *param)
                 if ((fp_in = fopen(msg.log_path, "rb")) == NULL) {
                     break;
                 }
+                iobuf_in = malloc(SDLOG_CONV_FILE_BUF_SZ);
+                if (iobuf_in) {
+                    setvbuf(fp_in, iobuf_in, _IOFBF, SDLOG_CONV_FILE_BUF_SZ); // set the wbuf of the FILE*, it writes to the SD card every 4KB
+                }
 
                 // Read whole header image locally,
                 step++;
                 if (fread(&sdlog_header, 1, sizeof(sdlog_header), fp_in) != sizeof(sdlog_header)) {
+                    break;
+                }
+
+                if (strcmp(sdlog_header.magic, "QQMLAB")) {
+                    ESP_LOGW(TAG, "LOG header check fail"); // TODO: strengthen the log binary checker
                     break;
                 }
 
@@ -220,9 +248,9 @@ static void sdlog_conv_task(void *param)
 
                 // set the output file buffer
                 step++;
-                iobuf = malloc(SDLOG_CONV_FILE_BUF_SZ);
-                if (iobuf) {
-                    setvbuf(fp_out, iobuf, _IOFBF, SDLOG_CONV_FILE_BUF_SZ); // set the wbuf of the FILE*, it writes to the SD card every 4KB
+                iobuf_out = malloc(SDLOG_CONV_FILE_BUF_SZ);
+                if (iobuf_out) {
+                    setvbuf(fp_out, iobuf_out, _IOFBF, SDLOG_CONV_FILE_BUF_SZ); // set the wbuf of the FILE*, it writes to the SD card every 4KB
                 }
 
                 // Call the converter API
@@ -253,11 +281,14 @@ static void sdlog_conv_task(void *param)
                 fclose(fp_out);
                 fp_out = NULL;
             }
-            if (iobuf) {
-                free(iobuf);
-                iobuf = NULL;
+            if (iobuf_in) {
+                free(iobuf_in);
+                iobuf_in = NULL;
             }
-
+            if (iobuf_out) {
+                free(iobuf_out);
+                iobuf_out = NULL;
+            }
             ESP_LOGI(TAG, "sdlog_conv_task(), fn=%s, status=%s(%d) conv_time=%lld", msg.log_path, (step == 0) ? "Success" : "Fail", step, conv_time);
         }
     }
