@@ -5,8 +5,9 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
-#include "./board.h"
 
+#include "board.h"
+#include "led.h"
 #include "sdlog_service.h"
 
 #define SDLOG_HTTP_BUF_SZ (128)
@@ -17,8 +18,6 @@ static const char *TAG = "HTTP_SERVER";
 
 // ExternaL functions
 extern esp_netif_t *wifi_manager_get_sta_netif(void);
-extern void led_op(uint32_t op_0on_1off_2toggle);
-extern uint32_t led_is_on(void);
 
 // ----------
 // UTILITY FUNCTIONS
