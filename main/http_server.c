@@ -10,6 +10,7 @@
 #include "led.h"
 #include "sdlog_service.h"
 #include "sdlog_conv.h"
+#include "twai.h"
 
 #define SDLOG_HTTP_BUF_SZ (128)
 
@@ -101,6 +102,9 @@ esp_err_t uri_index(httpd_req_t *req)
     esp_netif_ip_info_t ip_info;
     esp_netif_get_ip_info(wifi_manager_get_sta_netif(), &ip_info);
 
+    twai_webui_status_t twai_status;
+    twai_webui_query(&twai_status);
+
     char resp[384];
     snprintf(resp, sizeof(resp),
         "<html>"
@@ -109,8 +113,9 @@ esp_err_t uri_index(httpd_req_t *req)
         "<h3>Status</h3>"
         "<p>Board: %s | IP: " IPSTR " | Free RAM: %lu bytes</p>"
         "<p>Current LED Status: <b>%s</b></p>"
+        "<p>CAN RX:%lu TX:%lu</p>"
         "<hr>",
-        BOARD_NAME, IP2STR(&ip_info.ip), esp_get_free_heap_size(), led_is_on() ? "ON" : "OFF");
+        BOARD_NAME, IP2STR(&ip_info.ip), esp_get_free_heap_size(), led_is_on() ? "ON" : "OFF", twai_status.rx_pkt, twai_status.tx_pkt);
     httpd_resp_send_chunk(req, resp, HTTPD_RESP_USE_STRLEN);
 
     httpd_resp_send_chunk(req, "<h3>SD Logging Control</h3><p>", HTTPD_RESP_USE_STRLEN);

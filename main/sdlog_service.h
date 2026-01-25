@@ -33,6 +33,7 @@ typedef struct sdlog_webui_status_s {
     uint32_t is_logging;
     uint32_t bytes_written;
 } sdlog_webui_status_t;
+
 uint32_t sdlog_webui_query(uint32_t source, sdlog_webui_status_t *p_status);
 
 #endif // __SDLOG_SERVICE_H__

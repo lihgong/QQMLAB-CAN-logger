@@ -3,8 +3,10 @@
 #include "sdlog_service.h"
 #include "board.h"
 #include "led.h"
+#include "twai.h"
 
 static const char *TAG = "TWAI";
+static twai_webui_status_t twai_webui_stat;
 
 static void twai_rx_task(void *arg)
 {
@@ -13,6 +15,7 @@ static void twai_rx_task(void *arg)
 
     while (1) {
         if (twai_receive(&msg, portMAX_DELAY) == ESP_OK) { // Wait for CAN packet arriving
+            twai_webui_stat.rx_pkt++;
             sdlog_write(SDLOG_SOURCE_CAN, /*data_type*/ 0, sizeof(msg), &msg);
 
             // Make LED toggle to show the packet arriving
@@ -55,4 +58,13 @@ esp_err_t twai_service_init(void)
         gpio_set_level(TWAI_PIN_STANDBY, 0);
     }
     return ESP_OK;
+}
+
+// ----------
+// WEB-UI
+// ----------
+uint32_t twai_webui_query(twai_webui_status_t *p_status)
+{
+    *p_status = twai_webui_stat;
+    return 0;
 }
