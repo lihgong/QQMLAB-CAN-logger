@@ -8,15 +8,11 @@
 
 #include "./board.h"
 
-extern esp_err_t sd_card_init(void);
-extern esp_err_t led_init(void);
-extern esp_err_t wifi_sta_init(void);
-extern esp_err_t sdlog_service_init(void);
-extern esp_err_t twai_service_init(void);
-extern esp_err_t nvs_init(void);
-extern esp_err_t log_hub_init(void);
+#define MAIN_INIT_HOOK_FILE "main_hook.h"
 
-typedef esp_err_t (*fp_init_t)(void);
+#define APP_MAIN_INIT_FUNC(fp) extern esp_err_t(fp)(void);
+#include MAIN_INIT_HOOK_FILE
+#undef APP_MAIN_INIT_FUNC
 
 void app_main(void)
 {
@@ -24,14 +20,11 @@ void app_main(void)
     // If the program crasheds before this delay, the device may not be recognized
     vTaskDelay(pdMS_TO_TICKS(2000));
 
+    typedef esp_err_t (*fp_init_t)(void);
     fp_init_t fp_init[] = {
-        nvs_init,
-        led_init,
-        sd_card_init,
-        sdlog_service_init,
-        twai_service_init,
-        wifi_sta_init,
-        log_hub_init,
+#define APP_MAIN_INIT_FUNC(fp) fp,
+#include MAIN_INIT_HOOK_FILE
+#undef APP_MAIN_INIT_FUNC
     };
 
     for (uint32_t i = 0; i < sizeof(fp_init) / sizeof(fp_init_t); i++) {

@@ -1,0 +1,7 @@
+APP_MAIN_INIT_FUNC(nvs_init)
+APP_MAIN_INIT_FUNC(led_init)
+APP_MAIN_INIT_FUNC(sd_card_init)
+APP_MAIN_INIT_FUNC(sdlog_service_init)
+APP_MAIN_INIT_FUNC(twai_service_init)
+APP_MAIN_INIT_FUNC(wifi_sta_init)
+APP_MAIN_INIT_FUNC(log_hub_init)
