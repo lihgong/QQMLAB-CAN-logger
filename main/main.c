@@ -14,6 +14,7 @@ extern esp_err_t wifi_sta_init(void);
 extern esp_err_t sdlog_service_init(void);
 extern esp_err_t twai_service_init(void);
 extern esp_err_t nvs_init(void);
+extern esp_err_t log_hub_init(void);
 
 typedef esp_err_t (*fp_init_t)(void);
 
@@ -30,6 +31,7 @@ void app_main(void)
         sdlog_service_init,
         twai_service_init,
         wifi_sta_init,
+        log_hub_init,
     };
 
     for (uint32_t i = 0; i < sizeof(fp_init) / sizeof(fp_init_t); i++) {
