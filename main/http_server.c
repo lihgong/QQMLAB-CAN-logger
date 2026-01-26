@@ -105,6 +105,12 @@ esp_err_t uri_index(httpd_req_t *req)
     twai_webui_status_t twai_status;
     twai_webui_query(&twai_status);
 
+    uint32_t led_stat     = led_is_on_bmp();
+    char led_stat_buf[32] = {0};
+    for (uint32_t i = 0; i < LED_PIN_NUM; i++) {
+        strcat(led_stat_buf, (led_stat & (1 << i)) ? "ON, " : "OFF, ");
+    }
+
     char resp[384];
     snprintf(resp, sizeof(resp),
         "<html>"
@@ -112,10 +118,10 @@ esp_err_t uri_index(httpd_req_t *req)
         "<h1>QQMLAB CAN LOGGER</h1>"
         "<h3>Status</h3>"
         "<p>Board: %s | IP: " IPSTR " | Free RAM: %lu bytes</p>"
-        "<p>Current LED Status: <b>%s</b></p>"
+        "<p>LED Status: <b>%s</b></p>"
         "<p>CAN RX:%lu TX:%lu</p>"
         "<hr>",
-        BOARD_NAME, IP2STR(&ip_info.ip), esp_get_free_heap_size(), led_is_on() ? "ON" : "OFF", twai_status.rx_pkt, twai_status.tx_pkt);
+        BOARD_NAME, IP2STR(&ip_info.ip), esp_get_free_heap_size(), led_stat_buf, twai_status.rx_pkt, twai_status.tx_pkt);
     httpd_resp_send_chunk(req, resp, HTTPD_RESP_USE_STRLEN);
 
     httpd_resp_send_chunk(req, "<h3>SD Logging Control</h3><p>", HTTPD_RESP_USE_STRLEN);

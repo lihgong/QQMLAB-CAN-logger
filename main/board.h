@@ -33,8 +33,9 @@
 #if defined(TARGET_BOARD_ESP32C3)
 #define BOARD_NAME "ESP32-C3-AIRM2M"
 
-#define LED_PIN (13)
-// #define LED_POLARITY_INV
+#define LED_PIN0 (13)
+#define LED_PIN1 (12)
+//  #define LED_POLARITY_INV
 
 #define SDCARD_IN_SDSPI
 #define SDCARD_SPI_MOSI_PIN (7)
@@ -49,7 +50,7 @@
 
 #elif defined(TARGET_BOARD_ESP32_CAM)
 #define BOARD_NAME "ESP32-CAM"
-#define LED_PIN (33)
+#define LED_PIN0 (33)
 #define LED_POLARITY_INV
 
 #define SDCARD_IN_SDMMC
