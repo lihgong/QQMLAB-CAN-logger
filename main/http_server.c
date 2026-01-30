@@ -102,15 +102,16 @@ esp_err_t uri_index(httpd_req_t *req)
     // Handle GET
     char buf[128]; // No very long query string here, fixed size here to avoid buffer overflow
     if (httpd_req_get_url_query_len(req)) {
+        http_server_sdlog("/?%s", buf);
+
         if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK) {
             ESP_LOGI(TAG, "uri_index(), GET: %s", buf);
             uri_index_led_msg_handle(buf);
             uri_index_sdlog_msg_handle(buf);
         }
     } else {
-        buf[0] = '\0';
+        http_server_sdlog("/");
     }
-    http_server_sdlog("/?%s", buf);
 
     twai_webui_status_t twai_status;
     twai_webui_query(&twai_status);
@@ -248,16 +249,16 @@ esp_err_t uri_browse_log(httpd_req_t *req)
     char buf_admin[8];
     uint32_t admin_mode = 0;
     if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK) {
+        http_server_sdlog("/browse_log?%s", buf);
         if (httpd_query_key_value(buf, "admin", buf_admin, sizeof(buf_admin)) == ESP_OK) {
             if (strcmp(buf_admin, "1") == 0) {
                 admin_mode = 1;
             }
         }
     } else {
-        buf_admin[0] = '\0';
+        http_server_sdlog("/browse_log");
     }
 
-    http_server_sdlog("/browse_log?%s", buf);
     // Send HTTP header
     httpd_resp_send_chunk(req, "<html><body style='font-family:sans-serif;'>", HTTPD_RESP_USE_STRLEN);
     httpd_resp_send_chunk(req, "<h2>QQMLAB Logger - Browse Files</h2>", HTTPD_RESP_USE_STRLEN);
@@ -280,7 +281,6 @@ esp_err_t uri_browse_log(httpd_req_t *req)
 // ----------
 static esp_err_t _log_op(httpd_req_t *req, uint32_t op_0download_1remove_2conv)
 {
-
     // From URL query, extract path parameter
     // Eg: /download?path=/sdcard/log/http/000023/log.txt
     char buf[128];
@@ -380,6 +380,64 @@ esp_err_t uri_log_conv(httpd_req_t *req)
 }
 
 // ----------
+// URI: /can_tx
+// id=123&data=AABBCC
+// ----------
+static uint8_t hex_to_byte(char c)
+{
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    } else if (c >= 'a' && c <= 'f') {
+        return c - 'a' + 10;
+    } else if (c >= 'A' && c <= 'F') {
+        return c - 'A' + 10;
+    }
+    return 0;
+}
+
+// convert "AABBCC" into uint8_t array, 0xAA, 0xBB, 0xCC
+static void hex_to_bytes(const char *hex, uint8_t *dest, int byte_len)
+{
+    for (int i = 0; i < byte_len; i++) {
+        dest[i] = (hex_to_byte(hex[i * 2]) << 4) | hex_to_byte(hex[i * 2 + 1]);
+    }
+}
+
+esp_err_t uri_can_tx(httpd_req_t *req)
+{
+    char buf[128];
+    if (httpd_req_get_url_query_len(req)) {
+        if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK) {
+            http_server_sdlog("/can_tx/?%s", buf);
+            char str_id[16]   = {0};
+            char str_data[32] = {0};
+            httpd_query_key_value(buf, "id", str_id, sizeof(str_id));
+            httpd_query_key_value(buf, "data", str_data, sizeof(str_data));
+
+            if ((strlen(str_id) == 0) || (strlen(str_data) == 0)) {
+                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing ID or Data (e.g. /can_tx?id=123&data=1122)");
+                return ESP_FAIL;
+            }
+
+            uint32_t can_id   = strtol(str_id, NULL, 16);
+            uint32_t data_len = strlen(str_data) / 2;
+            data_len          = data_len > 8 ? 8 : data_len;
+            uint8_t data[8];
+            hex_to_bytes(str_data, data, data_len);
+            esp_err_t res = twai_webui_transmit(can_id, data_len, data);
+
+            if (res != ESP_OK) {
+                ESP_LOGE(TAG, "twai_return=%d", res);
+                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "TWAI Transmit Failed");
+            }
+        }
+    } else {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "CAN TX without valid parameter");
+    }
+    return _http_redirect_to_index(req, "/");
+}
+
+// ----------
 // HTTP server start body
 // ----------
 void http_server_start(void)
@@ -397,6 +455,7 @@ void http_server_start(void)
                 {.uri = "/log_download", .method = HTTP_GET, .handler = uri_log_download, .user_ctx = NULL},
                 {.uri = "/log_remove", .method = HTTP_GET, .handler = uri_log_remove, .user_ctx = NULL},
                 {.uri = "/log_conv", .method = HTTP_GET, .handler = uri_log_conv, .user_ctx = NULL},
+                {.uri = "/can_tx", .method = HTTP_GET, .handler = uri_can_tx, .user_ctx = NULL},
             };
 
             for (uint32_t i = 0; i < sizeof(uri_tbl) / sizeof(httpd_uri_t); i++) {

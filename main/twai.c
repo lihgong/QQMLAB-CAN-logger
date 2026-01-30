@@ -68,3 +68,15 @@ uint32_t twai_webui_query(twai_webui_status_t *p_status)
     *p_status = twai_webui_stat;
     return 0;
 }
+
+esp_err_t twai_webui_transmit(uint32_t can_id, uint32_t data_len, uint8_t *p_data)
+{
+    twai_message_t tx_msg = {
+        .extd             = (can_id > 0x7FF) ? 1 : 0,
+        .identifier       = can_id,
+        .data_length_code = data_len,
+    };
+    memcpy(tx_msg.data, p_data, data_len);
+
+    return twai_transmit(&tx_msg, pdMS_TO_TICKS(100));
+}
