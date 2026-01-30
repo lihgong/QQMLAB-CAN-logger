@@ -2,8 +2,8 @@
 #include "esp_wifi.h"
 #include "esp_event.h"
 
-#include "./board.h"
-#include "./wifi_passwd.h"
+#include "board.h"
+#include "wifi_passwd.h"
 
 static const char *TAG = "WIFI_MANAGER";
 
@@ -178,9 +178,4 @@ esp_err_t wifi_sta_init(void)
     ESP_ERROR_CHECK(esp_wifi_start());
 
     return ESP_OK;
-}
-
-esp_netif_t *wifi_manager_get_sta_netif(void)
-{
-    return sta_netif;
 }
