@@ -6,7 +6,7 @@
 #include "nvs_flash.h"
 #include "esp_timer.h"
 
-#include "./board.h"
+#include "board.h"
 
 #define MAIN_INIT_HOOK_FILE "main_hook.h"
 
