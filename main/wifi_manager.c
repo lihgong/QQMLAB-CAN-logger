@@ -4,17 +4,15 @@
 
 #include "board.h"
 #include "wifi_passwd.h"
+#include "http_server.h"
 
 static const char *TAG = "WIFI_MANAGER";
 
-static TaskHandle_t wifi_manager_task_handle = NULL;
+static TaskHandle_t wifi_manager_task_handle;
 
 #define WIFI_SCAN_MAX_AP (10) // maximum AP# to scan of nearby AP
 #define WIFI_ENTRIES_MAX (10)
 #define WIFI_FILE_PATH "/sdcard/wifi.txt"
-
-// External functions
-extern void http_server_start(void);
 
 // ----------
 // WIFI SSID entries
