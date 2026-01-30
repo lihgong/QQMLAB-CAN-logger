@@ -177,24 +177,6 @@ esp_err_t uri_index(httpd_req_t *req)
 }
 
 // ----------
-// URI: /led_post
-// ----------
-esp_err_t uri_led_post(httpd_req_t *req)
-{
-    ESP_LOGI(TAG, "uri_led_post(), req->content_len=%d", req->content_len);
-    http_server_sdlog("uri_led_post, req_len=%d", req->content_len);
-    if (req->content_len) { // If the requested size > 0
-        char buf[256];
-        if (httpd_req_recv(req, buf, sizeof(buf))) {
-            buf[req->content_len] = '\0';
-            ESP_LOGI(TAG, "uri_led_post(), %s", buf);
-            _led_msg_handle(buf);
-        }
-    }
-    return _http_redirect_to_index(req, "/");
-}
-
-// ----------
 // URI: /browse
 // ----------
 static esp_err_t uri_browse_log_recursive(httpd_req_t *req, const char *dir_path, uint32_t admin_mode)
@@ -424,7 +406,6 @@ void http_server_start(void)
         if (httpd_start(&http_server_h, &config) == ESP_OK) {
             httpd_uri_t uri_tbl[] = {
                 {.uri = "/", .method = HTTP_GET, .handler = uri_index, .user_ctx = NULL},
-                {.uri = "/led_post", .method = HTTP_POST, .handler = uri_led_post, .user_ctx = NULL},
                 {.uri = "/log_browse", .method = HTTP_GET, .handler = uri_browse_log, .user_ctx = NULL},
                 {.uri = "/log_download", .method = HTTP_GET, .handler = uri_log_download, .user_ctx = NULL},
                 {.uri = "/log_remove", .method = HTTP_GET, .handler = uri_log_remove, .user_ctx = NULL},
