@@ -34,11 +34,36 @@ static void http_server_sdlog(char *fmt, ...)
 // ----------
 // UTILITY FUNCTIONS
 // ----------
-static void _led_msg_handle(char *buf)
+static esp_err_t _http_redirect_to_index(httpd_req_t *req, char *uri_redirect)
+{
+    httpd_resp_set_status(req, "303 See Other"); // send HTTP 303 "see other", and redirect to index
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_hdr(req, "Location", uri_redirect);
+    httpd_resp_send(req, NULL, 0); // send header only, no send content
+    return ESP_OK;
+}
+
+static void http_server_send_resp_chunk_f(httpd_req_t *req, char *fmt, ...)
+{
+    char buf[384];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    buf[sizeof(buf) - 1] = '\0';
+    va_end(args);
+    httpd_resp_send_chunk(req, buf, HTTPD_RESP_USE_STRLEN);
+}
+
+// ----------
+// URI: /
+// led_op=0(on), led_op=1(off), led_op=2(toggle)
+// sdlog_start=ch(0/1/2)&epoch_time=time
+// sdlog_stop=ch(0/1/2)
+// ----------
+static void uri_index_led_msg_handle(char *buf)
 {
     char param[16];
     if (httpd_query_key_value(buf, "led_op", param, sizeof(param)) == ESP_OK) {
-        http_server_sdlog("_led_msg_handle, param=%s", buf);
         if (strcmp(param, "0") == 0) {
             led_op(0);
         } else if (strcmp(param, "1") == 0) {
@@ -49,7 +74,7 @@ static void _led_msg_handle(char *buf)
     }
 }
 
-static void _sdlog_msg_handle(char *buf)
+static void uri_index_sdlog_msg_handle(char *buf)
 {
     char val_str[32];
 
@@ -59,7 +84,6 @@ static void _sdlog_msg_handle(char *buf)
             if (httpd_query_key_value(buf, "epoch_time", val_str, sizeof(val_str)) == ESP_OK) {
                 uint64_t epoch = strtoull(val_str, NULL, 10);
                 sdlog_start(ch, epoch);
-                ESP_LOGI(TAG, "Start CH %d, epoch: %llu", ch, epoch);
             }
         }
     }
@@ -68,34 +92,25 @@ static void _sdlog_msg_handle(char *buf)
         int ch = atoi(val_str);
         if (ch >= 0 && ch < SDLOG_SOURCE_NUM) {
             sdlog_stop(ch);
-            ESP_LOGI(TAG, "Stop CH %d", ch);
+            http_server_sdlog("sdlog_stop, ch=%d", ch);
         }
     }
 }
 
-static esp_err_t _http_redirect_to_index(httpd_req_t *req, char *uri_redirect)
-{
-    httpd_resp_set_status(req, "303 See Other"); // send HTTP 303 "see other", and redirect to index
-    httpd_resp_set_type(req, "text/html");
-    httpd_resp_set_hdr(req, "Location", uri_redirect);
-    httpd_resp_send(req, NULL, 0); // send header only, no send content
-    return ESP_OK;
-}
-
-// ----------
-// URI: /
-// ----------
 esp_err_t uri_index(httpd_req_t *req)
 {
     // Handle GET
+    char buf[128]; // No very long query string here, fixed size here to avoid buffer overflow
     if (httpd_req_get_url_query_len(req)) {
-        char buf[128]; // No very long query string here, fixed size here to avoid buffer overflow
         if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK) {
             ESP_LOGI(TAG, "uri_index(), GET: %s", buf);
-            _led_msg_handle(buf);
-            _sdlog_msg_handle(buf);
+            uri_index_led_msg_handle(buf);
+            uri_index_sdlog_msg_handle(buf);
         }
+    } else {
+        buf[0] = '\0';
     }
+    http_server_sdlog("/?%s", buf);
 
     twai_webui_status_t twai_status;
     twai_webui_query(&twai_status);
@@ -106,8 +121,7 @@ esp_err_t uri_index(httpd_req_t *req)
         strcat(led_stat_buf, (led_stat & (1 << i)) ? "ON, " : "OFF, ");
     }
 
-    char resp[384];
-    snprintf(resp, sizeof(resp),
+    http_server_send_resp_chunk_f(req,
         "<html>"
         "<head><title>QQMLAB CAN Logger</title></head>"
         "<h1>QQMLAB CAN LOGGER</h1>"
@@ -117,30 +131,23 @@ esp_err_t uri_index(httpd_req_t *req)
         "<p>CAN RX:%lu TX:%lu</p>"
         "<hr>",
         BOARD_NAME, esp_get_free_heap_size(), led_stat_buf, twai_status.rx_pkt, twai_status.tx_pkt);
-    httpd_resp_send_chunk(req, resp, HTTPD_RESP_USE_STRLEN);
 
-    httpd_resp_send_chunk(req, "<h3>SD Logging Control</h3><p>", HTTPD_RESP_USE_STRLEN);
+    http_server_send_resp_chunk_f(req, "<h3>SD Logging Control</h3><p>");
 
     for (int i = 0; i < SDLOG_SOURCE_NUM; i++) {
         const char *ch_names[] = {"HTTP", "CAN"}; // maybe we can place these name setting in sdlog_service later
         sdlog_webui_status_t status;
         sdlog_webui_query(i, &status);
 
-        // Display icon according to the status
-        const char *status_icon = status.is_logging ? "&#128308; <b style='color:red;'>[REC]</b>" : "&#9898; IDLE";
-
-        snprintf(resp, sizeof(resp),
+        http_server_send_resp_chunk_f(req,
             "  Channel %d (%s): %s "
             "  <button onclick='doStart(%d)' %s>START</button> "
             "  <button onclick='doStop(%d)' %s>STOP</button> "
             "  <i>(Written: %" PRIu32 " bytes)</i><br>",
-            i, ch_names[i],
-            status_icon,
+            i, ch_names[i], status.is_logging ? "&#128308; <b style='color:red;'>[REC]</b>" : "&#9898; IDLE",
             i, status.is_logging ? "disabled" : "", // Recording, no press START
             i, status.is_logging ? "" : "disabled", // IDLE, no press STOP
             status.bytes_written);
-
-        httpd_resp_send_chunk(req, resp, HTTPD_RESP_USE_STRLEN);
     }
 
     httpd_resp_send_chunk(req,
@@ -174,8 +181,6 @@ esp_err_t uri_index(httpd_req_t *req)
 
     httpd_resp_send_chunk(req, NULL, 0); // end-of-transmission
 
-    http_server_sdlog("index page");
-
     return ESP_OK;
 }
 
@@ -198,59 +203,34 @@ static esp_err_t uri_browse_log_recursive(httpd_req_t *req, const char *dir_path
         char entry_path[128];
         int ret = snprintf(entry_path, sizeof(entry_path), "%s/%s", dir_path, entry->d_name);
         if (ret >= 0 && ret < sizeof(entry_path)) {
-            if (entry->d_type == DT_DIR) {
-                uri_browse_log_recursive(req, entry_path, admin_mode); // if folder, run the scan recursively
-            } else {
-                struct stat entry_stat;
-                stat(entry_path, &entry_stat);
-
-                httpd_resp_send_chunk(req, "<tr>", HTTPD_RESP_USE_STRLEN);
-
-                char row_buf[192];
-                ret = snprintf(row_buf, sizeof(row_buf), "<td>%s</td><td>%" PRId32 " KB</td>", entry_path, (entry_stat.st_size + 1023) / 1024);
-                if (ret >= 0 && ret < sizeof(row_buf)) {
-                    httpd_resp_send_chunk(req, row_buf, HTTPD_RESP_USE_STRLEN);
-                } else {
-                    ESP_LOGW(TAG, "row_buf[] not sufficient");
-                }
-
-                uint32_t view0_download1;
-                if (strstr(entry->d_name, ".txt") || strstr(entry->d_name, ".log")) {
-                    view0_download1 = 0;
-                } else {
-                    view0_download1 = 1;
-                }
-
-                ret = snprintf(row_buf, sizeof(row_buf), "<td><a href='/log_download?path=%s' target='_blank'>%s</a></td>",
-                    entry_path, (view0_download1 == 0) ? "View" : "Download");
-                if (ret >= 0 && ret < sizeof(row_buf)) {
-                    httpd_resp_send_chunk(req, row_buf, HTTPD_RESP_USE_STRLEN);
-                } else {
-                    ESP_LOGW(TAG, "row_buf[] not sufficient");
-                }
-
-                if (admin_mode) {
-                    ret = snprintf(row_buf, sizeof(row_buf), "<td><a href='/log_conv?path=%s'>Conv</a></td>", entry_path);
-                    if (ret >= 0 && ret < sizeof(row_buf)) {
-                        httpd_resp_send_chunk(req, row_buf, HTTPD_RESP_USE_STRLEN);
-                    } else {
-                        ESP_LOGW(TAG, "row_buf[] not sufficient");
-                    }
-
-                    ret = snprintf(row_buf, sizeof(row_buf), "<td><a href='/log_remove?path=%s'>Remove</a></td>", entry_path);
-                    if (ret >= 0 && ret < sizeof(row_buf)) {
-                        httpd_resp_send_chunk(req, row_buf, HTTPD_RESP_USE_STRLEN);
-                    } else {
-                        ESP_LOGW(TAG, "row_buf[] not sufficient");
-                    }
-                } else {
-                    httpd_resp_send_chunk(req, "<td></td><td></td>", HTTPD_RESP_USE_STRLEN);
-                }
-
-                httpd_resp_send_chunk(req, "</tr>", HTTPD_RESP_USE_STRLEN);
-            }
         } else {
-            ESP_LOGW(TAG, "entry_path[] not sufficient");
+            continue;
+        }
+
+        if (entry->d_type == DT_DIR) {
+            uri_browse_log_recursive(req, entry_path, admin_mode); // if folder, run the scan recursively
+        } else {
+            struct stat entry_stat;
+            stat(entry_path, &entry_stat);
+            char *str_view_download;
+            if (strstr(entry->d_name, ".txt") || strstr(entry->d_name, ".log")) {
+                str_view_download = "View";
+            } else {
+                str_view_download = "Download";
+            }
+
+            http_server_send_resp_chunk_f(req, "<tr>");
+            http_server_send_resp_chunk_f(req, "<td>%s</td><td>%" PRId32 " KB</td>", entry_path, (entry_stat.st_size + 1023) / 1024);
+            http_server_send_resp_chunk_f(req, "<td><a href='/log_download?path=%s' target='_blank'>%s</a></td>", entry_path, str_view_download);
+
+            if (admin_mode == 0) {
+                http_server_send_resp_chunk_f(req, "<td></td><td></td>");
+            } else {
+                http_server_send_resp_chunk_f(req, "<td><a href='/log_conv?path=%s'>Conv</a></td>", entry_path);
+                http_server_send_resp_chunk_f(req, "<td><a href='/log_remove?path=%s'>Remove</a></td>", entry_path);
+            }
+
+            http_server_send_resp_chunk_f(req, "</tr>", HTTPD_RESP_USE_STRLEN);
         }
     }
 
@@ -265,17 +245,19 @@ esp_err_t uri_browse_log(httpd_req_t *req)
 
     // From URL query, extract path parameter
     // Eg: /browse_log?admin=1
+    char buf_admin[8];
     uint32_t admin_mode = 0;
     if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK) {
-        char buf_admin[8];
         if (httpd_query_key_value(buf, "admin", buf_admin, sizeof(buf_admin)) == ESP_OK) {
             if (strcmp(buf_admin, "1") == 0) {
                 admin_mode = 1;
             }
         }
+    } else {
+        buf_admin[0] = '\0';
     }
 
-    http_server_sdlog("/browse_log");
+    http_server_sdlog("/browse_log?%s", buf);
     // Send HTTP header
     httpd_resp_send_chunk(req, "<html><body style='font-family:sans-serif;'>", HTTPD_RESP_USE_STRLEN);
     httpd_resp_send_chunk(req, "<h2>QQMLAB Logger - Browse Files</h2>", HTTPD_RESP_USE_STRLEN);
@@ -296,32 +278,34 @@ esp_err_t uri_browse_log(httpd_req_t *req)
 // ----------
 // URI: /log_download
 // ----------
-static esp_err_t _log_op(httpd_req_t *req, uint32_t op_0download_1delete_2conv)
+static esp_err_t _log_op(httpd_req_t *req, uint32_t op_0download_1remove_2conv)
 {
-    char buf[128];
-    char path[128];
 
     // From URL query, extract path parameter
     // Eg: /download?path=/sdcard/log/http/000023/log.txt
+    char buf[128];
     if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing Query String");
         return ESP_FAIL;
     }
 
+    char *uri_dict[] = {"log_download", "log_remove", "log_conv"};
+    http_server_sdlog("/%s?%s", uri_dict[op_0download_1remove_2conv], buf);
+
+    char path[128];
     if (httpd_query_key_value(buf, "path", path, sizeof(path)) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing path parameter");
         return ESP_FAIL;
     }
 
-    if (strncmp(path, MNT_SDCARD "/log", 11) != 0) { // ensure the path is always started with correct path
+    char *log_root = MNT_SDCARD "/log";
+    if (strncmp(path, log_root, strlen(log_root))) { // ensure correct path
         ESP_LOGW(TAG, "Access denied: %s", path);
         httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Access Denied");
         return ESP_FAIL;
     }
 
-    http_server_sdlog("/uri_log_download, path=%s, op_0download_1delete_2conv=%d", path, op_0download_1delete_2conv);
-
-    if (op_0download_1delete_2conv == 0) {
+    if (op_0download_1remove_2conv == 0) {
         char header_val[64]; // the header formating is sent when httpd_resp_send_chunk() is firstly called
 
         if (strstr(path, ".txt") || strstr(path, ".log")) {
@@ -364,7 +348,7 @@ static esp_err_t _log_op(httpd_req_t *req, uint32_t op_0download_1delete_2conv)
         httpd_resp_send_chunk(req, NULL, 0); // end-of-transmission
         return ESP_OK;
 
-    } else if (op_0download_1delete_2conv == 1) {
+    } else if (op_0download_1remove_2conv == 1) {
         if (remove(path) == 0) {
             ESP_LOGI(TAG, "Deleted: %s", path);
         } else {
@@ -372,7 +356,7 @@ static esp_err_t _log_op(httpd_req_t *req, uint32_t op_0download_1delete_2conv)
         }
         return _http_redirect_to_index(req, "/log_browse?admin=1");
 
-    } else if (op_0download_1delete_2conv == 2) {
+    } else if (op_0download_1remove_2conv == 2) {
         sdlog_conv_trig(path);
         return _http_redirect_to_index(req, "/log_browse?admin=1");
     } else {
@@ -392,7 +376,7 @@ esp_err_t uri_log_remove(httpd_req_t *req)
 
 esp_err_t uri_log_conv(httpd_req_t *req)
 {
-    return _log_op(req, 2); // remove
+    return _log_op(req, 2); // conversion
 }
 
 // ----------
