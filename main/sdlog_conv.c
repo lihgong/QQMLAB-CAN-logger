@@ -316,6 +316,6 @@ void sdlog_conv_task_init(void)
 void sdlog_conv_trig(char *path)
 {
     sdlog_conv_task_msg_t msg;
-    strncpy(msg.log_path, path, sizeof(msg.log_path));
+    strlcpy(msg.log_path, path, sizeof(msg.log_path));
     xQueueSend(sdlog_conv_task_msgq, &msg, 0); // block time = 0
 }

@@ -187,14 +187,14 @@ static void _sdlog_task_openfile(sdlog_cmd_t *p_cmd, void *p_payload)
     sdlog_header_t sdlog_header = {0};
 
     // sdlog_header.sys
-    strncpy(sdlog_header.sys.magic, "QQMLAB", sizeof(sdlog_header.sys.magic));
+    strlcpy(sdlog_header.sys.magic, "QQMLAB", sizeof(sdlog_header.sys.magic));
     sdlog_header.sys.version       = 1;
     sdlog_header.sys.header_sz     = 512;
     sdlog_header.sys.us_epoch_time = *(uint64_t *)(p_payload);
     sdlog_header.sys.us_sys_time   = p_cmd->us_sys_time;
     sdlog_header.sys.fmt           = p_src->fmt;
-    strncpy(sdlog_header.sys.board_name, BOARD_NAME, sizeof(sdlog_header.sys.board_name));
-    strncpy(sdlog_header.sys.firmware_ver, "20260107", sizeof(sdlog_header.sys.firmware_ver));
+    strlcpy(sdlog_header.sys.board_name, BOARD_NAME, sizeof(sdlog_header.sys.board_name));
+    strlcpy(sdlog_header.sys.firmware_ver, "20260107", sizeof(sdlog_header.sys.firmware_ver));
     sdlog_header.sys.offset_meta = 512;
     sdlog_header.sys.offset_data = 1024;
 
