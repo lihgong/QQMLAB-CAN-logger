@@ -5,13 +5,111 @@
 #include "./board.h"
 #include "./wifi_passwd.h"
 
-esp_netif_t *sta_netif;
-
 static const char *TAG = "WIFI_MANAGER";
+
+static TaskHandle_t wifi_manager_task_handle = NULL;
+
+#define WIFI_SCAN_MAX_AP (10) // maximum AP# to scan of nearby AP
+#define WIFI_ENTRIES_MAX (10)
+#define WIFI_FILE_PATH "/sdcard/wifi.txt"
 
 // External functions
 extern void http_server_start(void);
 
+// ----------
+// WIFI SSID entries
+// ----------
+esp_netif_t *sta_netif;
+
+typedef struct {
+    char ssid[32];
+    char pass[64];
+} wifi_entry_t;
+
+wifi_entry_t known_network[WIFI_ENTRIES_MAX];
+uint32_t known_network_cnt = 0;
+
+static void wifi_manager_read_known_network(void)
+{
+#if defined(WIFI_PASSWD_FROM_CODE)
+    strlcpy(known_network[0].ssid, WIFI_SSID, sizeof(known_network[0].ssid));
+    strlcpy(known_network[0].pass, WIFI_PASS, sizeof(known_network[0].pass));
+    known_network_cnt++;
+#endif
+
+#if defined(WIFI_PASSWD_FROM_SD_CARD)
+    do {
+        FILE *f = fopen(WIFI_FILE_PATH, "r");
+        if (f == NULL) {
+            ESP_LOGE(TAG, "Can't find %s", WIFI_FILE_PATH);
+            break;
+        }
+
+        uint32_t is_passwd = 0;
+        while (known_network_cnt < WIFI_ENTRIES_MAX) {
+            char line[128];
+            if (fgets(line, sizeof(line), f) == 0) {
+                break; // reach EOF
+            }
+
+            // Skip \r\n, set NULL, and skip empty line
+            line[strcspn(line, "\r\n")] = 0; // Skip \r\n, set NULL
+            if (strlen(line) == 0) {
+                continue;
+            }
+
+            wifi_entry_t *p_network = &known_network[known_network_cnt];
+
+            if (is_passwd == 0) {
+                strlcpy(p_network->ssid, line, sizeof(p_network->ssid));
+                is_passwd = 1;
+            } else {
+                strlcpy(p_network->pass, line, sizeof(p_network->pass));
+                ESP_LOGI(TAG, "SSID loaded: [%s] [%s]", p_network->ssid, p_network->pass);
+                is_passwd = 0;
+                known_network_cnt++;
+            }
+        }
+        fclose(f);
+    } while (0);
+#endif
+}
+
+// ----------
+// WIFI scan & connect API
+// ----------
+static void wifi_scan_and_connect(void)
+{
+    // WIFI scan
+    wifi_scan_config_t scan_config = {0};                            // if no special purpose (for scan), just set to 0 is fine
+    ESP_ERROR_CHECK(esp_wifi_scan_start(&scan_config, /*block*/ 1)); // blocking wait
+
+    uint16_t ap_num = WIFI_SCAN_MAX_AP; // tell the API maximum AP to scan, and got the scanned result
+    wifi_ap_record_t ap_records[WIFI_SCAN_MAX_AP];
+    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&ap_num, ap_records));
+
+    for (int i = 0; i < ap_num; i++) {
+        for (int j = 0; j < known_network_cnt; j++) {
+            if (strcmp((char *)ap_records[i].ssid, known_network[j].ssid) == 0) {
+                wifi_entry_t *p_network = &known_network[j];
+
+                ESP_LOGI(TAG, "Find match SSID %s, connect...", p_network->ssid);
+
+                wifi_config_t wifi_config = {0};
+                strlcpy((char *)wifi_config.sta.ssid, p_network->ssid, 32);
+                strlcpy((char *)wifi_config.sta.password, p_network->pass, 64);
+
+                ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+                ESP_ERROR_CHECK(esp_wifi_connect());
+                return;
+            }
+        }
+    }
+}
+
+// ----------
+// WIFI event handler
+// ----------
 static void server_up_when_ip_obtained(void)
 {
     http_server_start();
@@ -20,10 +118,15 @@ static void server_up_when_ip_obtained(void)
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
+        ESP_LOGI(TAG, "Start to connect AP...");
+        if (wifi_manager_task_handle) {
+            xTaskNotifyGive(wifi_manager_task_handle);
+        }
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        esp_wifi_connect();
-        ESP_LOGI(TAG, "Retrying connection to AP...");
+        ESP_LOGI(TAG, "Disconnected. Scanning for other known networks...");
+        if (wifi_manager_task_handle) {
+            xTaskNotifyGive(wifi_manager_task_handle);
+        }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
@@ -31,32 +134,47 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
     }
 }
 
+// ----------
+// WIFI manager task
+// ----------
+
+static void wifi_manager_background_task(void *pvParameters)
+{
+    while (1) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        ESP_LOGW(TAG, "WIFI Manager: got connection request, wait 2sec...");
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        wifi_scan_and_connect();
+        ESP_LOGI(TAG, "Connection Manager: connect completed");
+    }
+}
+
+// ----------
+// WIFI public API
+// ----------
 esp_err_t wifi_sta_init(void)
 {
-    // Start WIFI
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA Starting...");
+
+    // Load known network from SD card (only once)
+    wifi_manager_read_known_network();
+
+    // Start the WIFI manager background task
+    xTaskCreate(wifi_manager_background_task, "wifi_mgr_task", 4096, NULL, 5, &wifi_manager_task_handle);
+
+    // Init TCP/IP & WIFI (only once)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     sta_netif = esp_netif_create_default_wifi_sta();
-
     esp_netif_set_hostname(sta_netif, HOSTNAME);
-
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-
     esp_event_handler_instance_t instance_any_id;
     esp_event_handler_instance_t instance_got_ip;
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, &instance_any_id));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, &instance_got_ip));
-
-    wifi_config_t wifi_config = {
-        .sta = {
-            .ssid     = WIFI_SSID,
-            .password = WIFI_PASS,
-        },
-    };
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
     return ESP_OK;
