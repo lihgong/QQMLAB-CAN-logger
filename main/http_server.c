@@ -18,7 +18,7 @@ httpd_handle_t http_server_h;
 static const char *TAG = "HTTP_SERVER";
 
 // ----------
-// UTILITY FUNCTIONS
+// HTTP SERVER LOG API
 // ----------
 static void http_server_sdlog(char *fmt, ...)
 {
@@ -31,6 +31,9 @@ static void http_server_sdlog(char *fmt, ...)
     }
 }
 
+// ----------
+// UTILITY FUNCTIONS
+// ----------
 static void _led_msg_handle(char *buf)
 {
     char param[16];
