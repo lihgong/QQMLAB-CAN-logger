@@ -4,7 +4,6 @@
 
 #include "esp_http_server.h"
 #include "esp_log.h"
-#include "esp_netif.h"
 
 #include "board.h"
 #include "led.h"
@@ -17,9 +16,6 @@
 // TOP-level HTTP server handle
 httpd_handle_t http_server_h;
 static const char *TAG = "HTTP_SERVER";
-
-// ExternaL functions
-extern esp_netif_t *wifi_manager_get_sta_netif(void);
 
 // ----------
 // UTILITY FUNCTIONS
@@ -39,7 +35,6 @@ static void _led_msg_handle(char *buf)
 {
     char param[16];
     if (httpd_query_key_value(buf, "led_op", param, sizeof(param)) == ESP_OK) {
-        ESP_LOGI(TAG, "_led_msg_handle(), param=%s", param);
         http_server_sdlog("_led_msg_handle, param=%s", buf);
         if (strcmp(param, "0") == 0) {
             led_op(0);
@@ -99,9 +94,6 @@ esp_err_t uri_index(httpd_req_t *req)
         }
     }
 
-    esp_netif_ip_info_t ip_info;
-    esp_netif_get_ip_info(wifi_manager_get_sta_netif(), &ip_info);
-
     twai_webui_status_t twai_status;
     twai_webui_query(&twai_status);
 
@@ -117,11 +109,11 @@ esp_err_t uri_index(httpd_req_t *req)
         "<head><title>QQMLAB CAN Logger</title></head>"
         "<h1>QQMLAB CAN LOGGER</h1>"
         "<h3>Status</h3>"
-        "<p>Board: %s | IP: " IPSTR " | Free RAM: %lu bytes</p>"
+        "<p>Board: %s | Free RAM: %lu bytes</p>"
         "<p>LED Status: <b>%s</b></p>"
         "<p>CAN RX:%lu TX:%lu</p>"
         "<hr>",
-        BOARD_NAME, IP2STR(&ip_info.ip), esp_get_free_heap_size(), led_stat_buf, twai_status.rx_pkt, twai_status.tx_pkt);
+        BOARD_NAME, esp_get_free_heap_size(), led_stat_buf, twai_status.rx_pkt, twai_status.tx_pkt);
     httpd_resp_send_chunk(req, resp, HTTPD_RESP_USE_STRLEN);
 
     httpd_resp_send_chunk(req, "<h3>SD Logging Control</h3><p>", HTTPD_RESP_USE_STRLEN);
@@ -424,10 +416,7 @@ esp_err_t uri_log_conv(httpd_req_t *req)
 void http_server_start(void)
 {
     static uint8_t init = 0;
-    if (init) {
-        ESP_LOGW(TAG, "Webserver already started!");
-
-    } else {
+    if (init == 0) {
         init = 1;
 
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
