@@ -27,50 +27,36 @@ typedef struct {
 wifi_entry_t known_network[WIFI_ENTRIES_MAX];
 uint32_t known_network_cnt = 0;
 
-static void wifi_manager_read_known_network(void)
+static void wifi_manager_add_known_network(void)
 {
 #if defined(WIFI_PASSWD_FROM_CODE)
-    strlcpy(known_network[0].ssid, WIFI_SSID, sizeof(known_network[0].ssid));
-    strlcpy(known_network[0].pass, WIFI_PASS, sizeof(known_network[0].pass));
-    known_network_cnt++;
+    if (known_network_cnt < WIFI_ENTRIES_MAX) {
+        strlcpy(known_network[known_network_cnt].ssid, WIFI_SSID, sizeof(known_network[known_network_cnt].ssid));
+        strlcpy(known_network[known_network_cnt].pass, WIFI_PASS, sizeof(known_network[known_network_cnt].pass));
+        known_network_cnt++;
+    }
 #endif
+}
 
-#if defined(WIFI_PASSWD_FROM_SD_CARD)
-    do {
-        FILE *f = fopen(WIFI_FILE_PATH, "r");
-        if (f == NULL) {
-            ESP_LOGE(TAG, "Can't find %s", WIFI_FILE_PATH);
-            break;
-        }
+uint32_t wifi_manager_syscfg(const char *section, const char *key, const char *value)
+{
+    if (strcmp(section, "wifi_known_network") == 0) {
+        if (known_network_cnt < WIFI_ENTRIES_MAX) {
+            if (strcmp(key, "network") == 0) {
+                wifi_entry_t *p_network = &known_network[known_network_cnt];
 
-        uint32_t is_passwd = 0;
-        while (known_network_cnt < WIFI_ENTRIES_MAX) {
-            char line[128];
-            if (fgets(line, sizeof(line), f) == 0) {
-                break; // reach EOF
-            }
-
-            // Skip \r\n, set NULL, and skip empty line
-            line[strcspn(line, "\r\n")] = 0; // Skip \r\n, set NULL
-            if (strlen(line) == 0) {
-                continue;
-            }
-
-            wifi_entry_t *p_network = &known_network[known_network_cnt];
-
-            if (is_passwd == 0) {
-                strlcpy(p_network->ssid, line, sizeof(p_network->ssid));
-                is_passwd = 1;
-            } else {
-                strlcpy(p_network->pass, line, sizeof(p_network->pass));
-                ESP_LOGI(TAG, "SSID loaded: [%s] [%s]", p_network->ssid, p_network->pass);
-                is_passwd = 0;
-                known_network_cnt++;
+                int matched = sscanf(value, " %31[^|]|%63s", p_network->ssid, p_network->pass); // %[^,] means read until encountering "|"
+                if (matched == 2) {
+                    ESP_LOGI(TAG, "SSID loaded: [%s] [%s]", p_network->ssid, p_network->pass);
+                    known_network_cnt++;
+                } else {
+                    ESP_LOGW(TAG, "Error: Invalid format in line: %s", value);
+                }
             }
         }
-        fclose(f);
-    } while (0);
-#endif
+    }
+
+    return 1;
 }
 
 // ----------
@@ -155,8 +141,8 @@ esp_err_t wifi_sta_init(void)
 {
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA Starting...");
 
-    // Load known network from SD card (only once)
-    wifi_manager_read_known_network();
+    // Load known network (only once)
+    wifi_manager_add_known_network();
 
     // Start the WIFI manager background task
     xTaskCreate(wifi_manager_background_task, "wifi_mgr_task", 4096, NULL, 5, &wifi_manager_task_handle);
