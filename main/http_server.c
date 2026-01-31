@@ -18,6 +18,45 @@ static const char *TAG = "HTTP_SERVER";
 httpd_handle_t http_server_h; // TOP-level HTTP server handle
 
 // ----------
+// SYSCFG HOOK
+// ----------
+#define CAN_TX_LIST_NUM (8)
+
+typedef struct can_tx_list_entry_s {
+    char desc[32];
+    char id[9];    // 8char (if EXT-CAN-ID, + NULL)
+    char data[17]; // 8char + NULL
+} can_tx_list_entry_t;
+
+typedef struct can_tx_list_s {
+    uint8_t num;
+    can_tx_list_entry_t list[CAN_TX_LIST_NUM];
+} can_tx_list_t;
+
+can_tx_list_t can_tx_list;
+
+uint32_t http_syscfg(const char *section, const char *key, const char *value)
+{
+    if (strcmp(section, "http_server_can_tx") == 0) {
+        if (can_tx_list.num < CAN_TX_LIST_NUM) {
+            if (strcmp(key, "cmd") == 0) {
+                can_tx_list_entry_t *p_entry = &can_tx_list.list[can_tx_list.num];
+
+                int matched = sscanf(value, " %31[^,], %8[^,], %16s", p_entry->desc, p_entry->id, p_entry->data); // %[^,] means read until encountering ","
+                if (matched == 3) {
+                    ESP_LOGI(TAG, "Success, desc=%s, id=%s, data=%s", p_entry->desc, p_entry->id, p_entry->data);
+                    can_tx_list.num++;
+                } else {
+                    ESP_LOGW(TAG, "Error: Invalid format in line: %s", value);
+                }
+            }
+        }
+    }
+
+    return 1; // means OK
+}
+
+// ----------
 // HTTP SERVER LOG API
 // ----------
 static void http_server_sdlog(char *fmt, ...)
@@ -60,21 +99,6 @@ static void http_server_send_resp_chunk_f(httpd_req_t *req, char *fmt, ...)
 // sdlog_start=ch(0/1/2)&epoch_time=time
 // sdlog_stop=ch(0/1/2)
 // ----------
-
-#define CAN_TX_LIST_NUM (8)
-
-typedef struct can_tx_list_entry_s {
-    char desc[32];
-    char id[9];    // 8char (if EXT-CAN-ID, + NULL)
-    char data[17]; // 8char + NULL
-} can_tx_list_entry_t;
-
-typedef struct can_tx_list_s {
-    uint8_t num;
-    can_tx_list_entry_t list[CAN_TX_LIST_NUM];
-} can_tx_list_t;
-
-can_tx_list_t can_tx_list;
 
 static void uri_index_led_msg_handle(char *buf)
 {
@@ -487,28 +511,4 @@ void http_server_start(void)
             }
         }
     }
-}
-
-// ----------
-// SYSCFG HOOK
-// ----------
-uint32_t http_syscfg_hook(const char *section, const char *key, const char *value)
-{
-    if (strcmp(section, "http_server_can_tx") == 0) {
-        if (can_tx_list.num < CAN_TX_LIST_NUM) {
-            if (strcmp(key, "cmd") == 0) {
-                can_tx_list_entry_t *p_entry = &can_tx_list.list[can_tx_list.num];
-
-                int matched = sscanf(value, " %31[^,], %8[^,], %16s", p_entry->desc, p_entry->id, p_entry->data); // %[^,] means read until encountering ","
-                if (matched == 3) {
-                    ESP_LOGI(TAG, "Success, desc=%s, id=%s, data=%s", p_entry->desc, p_entry->id, p_entry->data);
-                    can_tx_list.num++;
-                } else {
-                    ESP_LOGW(TAG, "Error: Invalid format in line: %s", value);
-                }
-            }
-        }
-    }
-
-    return 1; // means OK
 }
