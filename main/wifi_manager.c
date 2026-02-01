@@ -104,6 +104,8 @@ static void wifi_scan_and_connect(void)
 static void server_up_when_ip_obtained(void)
 {
     http_server_start();
+    void start_mdns_service(void);
+    start_mdns_service();
 }
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)

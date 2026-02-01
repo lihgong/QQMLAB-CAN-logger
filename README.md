@@ -46,3 +46,7 @@ Initial bring up of the board with WIFI
 5. ESPCONNECT site can burn the image over web, we need to merge binary first
 esptool.py --chip esp32 merge_bin -o factory.bin --flash_mode dio --flash_size 4MB 0x1000 build/bootloader/bootloader.bin 0x8000 build/partition_table/partition-table.bin 0x10000 build/esp32_can_logger.bin
 
+
+mdns sometimes were removed from core package and we will have build error
+execute following line to include it
+idf.py add-dependency "espressif/mdns^1.2.0"
