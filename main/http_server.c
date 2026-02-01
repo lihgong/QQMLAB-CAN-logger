@@ -145,7 +145,6 @@ esp_err_t uri_index(httpd_req_t *req)
         http_server_sdlog("/?%s", buf);
 
         if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK) {
-            ESP_LOGI(TAG, "uri_index(), GET: %s", buf);
             uri_index_led_msg_handle(buf);
             uri_index_sdlog_msg_handle(buf);
         }
@@ -240,7 +239,8 @@ static esp_err_t uri_browse_log_recursive(httpd_req_t *req, const char *dir_path
 {
     DIR *dir = opendir(dir_path);
     if (dir == NULL) {
-        return ESP_OK; // return if the folder can't open
+        httpd_resp_send_chunk(req, "<tr><td colspan='5' style='color:grey; text-align:center;'>No data in this category</td></tr>", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
     }
 
     struct dirent *entry;
@@ -261,22 +261,34 @@ static esp_err_t uri_browse_log_recursive(httpd_req_t *req, const char *dir_path
         } else {
             struct stat entry_stat;
             stat(entry_path, &entry_stat);
-            char *str_view_download;
-            if (strstr(entry->d_name, ".txt") || strstr(entry->d_name, ".log")) {
-                str_view_download = "View";
-            } else {
-                str_view_download = "Download";
+
+            // Shorten the display path
+            // ORIG: /sdcard/log/can/000015/log.txt -> SHOW: 000015/log.txt
+            const char *display_path = entry_path;
+            if (strlen(entry_path) > 17) { // "/sdcard/log/xxxx/" ~= 17 chars
+                char *p = strstr(entry_path, "/log/");
+                if (p) {
+                    p = strchr(p + 5, '/'); // skip 5-chars ("/log/"), and find the next "/"
+                    if (p) {
+                        display_path = p + 1;
+                    }
+                }
             }
 
-            http_server_send_resp_chunk_f(req, "<tr>");
-            http_server_send_resp_chunk_f(req, "<td>%s</td><td>%" PRId32 " KB</td>", entry_path, (entry_stat.st_size + 1023) / 1024);
-            http_server_send_resp_chunk_f(req, "<td><a href='/log_download?path=%s' target='_blank'>%s</a></td>", entry_path, str_view_download);
+            char *action_text = (strstr(entry->d_name, ".txt") || strstr(entry->d_name, ".log")) ? "View" : "Download";
+
+            http_server_send_resp_chunk_f(req,
+                "<tr><td>%s</td><td>%" PRId32 " KB</td>"
+                "<td><a href='/log_download?path=%s' target='_blank'>%s</a></td>",
+                display_path, (entry_stat.st_size + 1023) / 1024, entry_path, action_text);
 
             if (admin_mode == 0) {
                 http_server_send_resp_chunk_f(req, "<td></td><td></td>");
             } else {
-                http_server_send_resp_chunk_f(req, "<td><a href='/log_conv?path=%s'>Conv</a></td>", entry_path);
-                http_server_send_resp_chunk_f(req, "<td><a href='/log_remove?path=%s'>Remove</a></td>", entry_path);
+                http_server_send_resp_chunk_f(req,
+                    "<td><a href='/log_conv?path=%s'>Conv</a></td>"
+                    "<td><a href='/log_remove?path=%s'>Remove</a></td>",
+                    entry_path, entry_path);
             }
 
             http_server_send_resp_chunk_f(req, "</tr>", HTTPD_RESP_USE_STRLEN);
@@ -294,33 +306,62 @@ esp_err_t uri_browse_log(httpd_req_t *req)
 
     // From URL query, extract path parameter
     // Eg: /browse_log?admin=1
-    char buf_admin[8];
     uint32_t admin_mode = 0;
     if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK) {
+        char buf_admin[8];
         http_server_sdlog("/browse_log?%s", buf);
         if (httpd_query_key_value(buf, "admin", buf_admin, sizeof(buf_admin)) == ESP_OK) {
-            if (strcmp(buf_admin, "1") == 0) {
-                admin_mode = 1;
-            }
+            admin_mode = (strcmp(buf_admin, "1") == 0);
         }
     } else {
         http_server_sdlog("/browse_log");
     }
 
     // Send HTTP header
-    httpd_resp_send_chunk(req, "<html><body style='font-family:sans-serif;'>", HTTPD_RESP_USE_STRLEN);
-    httpd_resp_send_chunk(req, "<h2>QQMLAB Logger - Browse Files</h2>", HTTPD_RESP_USE_STRLEN);
-    httpd_resp_send_chunk(req, "<table border='1' cellpadding='5' style='border-collapse:collapse;'>", HTTPD_RESP_USE_STRLEN);
-    httpd_resp_send_chunk(req, "<tr bgcolor='#ddd'>", HTTPD_RESP_USE_STRLEN);
-    httpd_resp_send_chunk(req, "<th>File Path</th> <th>Size</th> <th>Action</th> <th>Conv</th> <th>Remove</th>", HTTPD_RESP_USE_STRLEN);
-    httpd_resp_send_chunk(req, "</tr>", HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send_chunk(req,
+        "<html><head><style>"
+        // 回歸第一版最喜歡的字體設定，並稍微調大一點點 (14px)
+        "body{margin:15px; background-color:#f8f9fa; font-family:sans-serif; font-size:14px; color:#333;}"
+        // 寬度自適應 (窄版)，置左
+        "table{border-collapse:collapse; width:auto; min-width:480px; max-width:850px; margin-bottom:25px; background-color:white; box-shadow: 0 1px 3px rgba(0,0,0,0.1);}"
+        // 維持矮高度 (4px)，並稍微增加一點點 line-height 讓字體呼吸
+        "th,td{border:1px solid #ddd; padding:4px 12px; text-align:left; line-height:1.4;}"
+        "th{background-color:#eee; color:#555; font-weight:600; font-size:13px;}"
+        // 這裡改回 sans-serif，不再使用 Consolas，視覺會變得很柔和
+        "td{white-space:nowrap; font-family:inherit;}"
+        "tr:nth-child(even){background-color:#fafafa;}"
+        "tr:hover{background-color:#f1f1f1;}"
+        // 標題也維持精緻窄版
+        "h3{background-color:#444; color:white; padding:5px 15px; border-radius:3px; margin:20px 0 8px 0; display:inline-block; font-size:15px; font-weight:500;}"
+        ".size-col{text-align:right; font-size:12px; color:#777;}"
+        "a{text-decoration:none; color:#007bff; font-weight:500;}"
+        "a:hover{text-decoration:underline;}"
+        "</style></head><body>", // 移除 body inline style，改用 style tag 定義
+        HTTPD_RESP_USE_STRLEN);
 
-    // Execute recursive folder scan
-    uri_browse_log_recursive(req, MNT_SDCARD "/log", admin_mode);
+    httpd_resp_send_chunk(req, "<h2>QQMLAB Logger - File Explorer</h2>", HTTPD_RESP_USE_STRLEN);
 
-    // Send footer
-    httpd_resp_send_chunk(req, "</table><br><a href='/'>Back to Home</a></body></html>", HTTPD_RESP_USE_STRLEN);
-    httpd_resp_send_chunk(req, NULL, 0); // end-of-transmission
+    // Define the category that we want to display. Static first, dynamic later
+    const char *categories[]  = {"CAN", "HTTP", "CONSOLE"};
+    const char *sub_folders[] = {"/can", "/http", "/console"};
+    for (uint32_t i = 0; i < sizeof(categories) / sizeof(char *); i++) {
+        // TITLE
+        http_server_send_resp_chunk_f(req, "<h3>[ %s ]</h3>", categories[i]);
+
+        // BEGIN OF TABLE
+        httpd_resp_send_chunk(req, "<table><tr><th>File Path</th><th>Size</th><th>Action</th><th>Conv</th><th>Remove</th></tr>", HTTPD_RESP_USE_STRLEN);
+
+        // Generate target path, and scan
+        char target_path[64];
+        snprintf(target_path, sizeof(target_path), MNT_SDCARD "/log%s", sub_folders[i]);
+        uri_browse_log_recursive(req, target_path, admin_mode);
+
+        // END OF TABLE
+        httpd_resp_send_chunk(req, "</table>", HTTPD_RESP_USE_STRLEN);
+    }
+
+    httpd_resp_send_chunk(req, "<br><a href='/'>Back to Home</a></body></html>", HTTPD_RESP_USE_STRLEN);
+    httpd_resp_send_chunk(req, NULL, 0);
     return ESP_OK;
 }
 
@@ -475,7 +516,6 @@ esp_err_t uri_can_tx(httpd_req_t *req)
             esp_err_t res = twai_webui_transmit(can_id, data_len, data);
 
             if (res != ESP_OK) {
-                ESP_LOGE(TAG, "twai_return=%d", res);
                 httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "TWAI Transmit Failed");
             }
         }
