@@ -4,7 +4,7 @@
 // Some top-level settings can be kept here, maybe it's not truly "board" level
 // I can refactor this part later
 
-#define HOSTNAME "QQMLAB-LOGGER" // HOST-NAME
+#define DEF_HOSTNAME "QQMLAB-LOGGER" // HOST-NAME
 
 #define MNT_SDCARD "/sdcard" // SD card mount position
 
