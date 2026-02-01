@@ -12,7 +12,6 @@ static TaskHandle_t wifi_manager_task_handle;
 
 #define WIFI_SCAN_MAX_AP (10) // maximum AP# to scan of nearby AP
 #define WIFI_ENTRIES_MAX (10)
-#define WIFI_FILE_PATH "/sdcard/wifi.txt"
 
 // ----------
 // WIFI SSID entries
@@ -45,8 +44,10 @@ uint32_t wifi_manager_syscfg(const char *section, const char *key, const char *v
             if (strcmp(key, "network") == 0) {
                 wifi_entry_t *p_network = &known_network[known_network_cnt];
 
+                // set default password as empty to support open WIFI network (no password)
+                memset(p_network->pass, 0, sizeof(p_network->pass));
                 int matched = sscanf(value, " %31[^|]|%63s", p_network->ssid, p_network->pass); // %[^,] means read until encountering "|"
-                if (matched == 2) {
+                if (matched >= 1) {
                     ESP_LOGI(TAG, "SSID loaded: [%s] [%s]", p_network->ssid, p_network->pass);
                     known_network_cnt++;
                 } else {
@@ -64,6 +65,11 @@ uint32_t wifi_manager_syscfg(const char *section, const char *key, const char *v
 // ----------
 static void wifi_scan_and_connect(void)
 {
+    if (known_network_cnt == 0) {
+        ESP_LOGW(TAG, "No known Wifi Network");
+        return;
+    }
+
     // WIFI scan
     wifi_scan_config_t scan_config = {0};                            // if no special purpose (for scan), just set to 0 is fine
     ESP_ERROR_CHECK(esp_wifi_scan_start(&scan_config, /*block*/ 1)); // blocking wait
