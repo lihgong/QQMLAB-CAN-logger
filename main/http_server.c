@@ -320,23 +320,22 @@ esp_err_t uri_browse_log(httpd_req_t *req)
     // Send HTTP header
     httpd_resp_send_chunk(req,
         "<html><head><style>"
-        // 回歸第一版最喜歡的字體設定，並稍微調大一點點 (14px)
+        // 1. 回歸第一版最愛的 Sans-serif 現代感
         "body{margin:15px; background-color:#f8f9fa; font-family:sans-serif; font-size:14px; color:#333;}"
-        // 寬度自適應 (窄版)，置左
+        // 2. 窄版配置：width:auto 讓它隨內容縮放，max-width 避免過寬
         "table{border-collapse:collapse; width:auto; min-width:480px; max-width:850px; margin-bottom:25px; background-color:white; box-shadow: 0 1px 3px rgba(0,0,0,0.1);}"
-        // 維持矮高度 (4px)，並稍微增加一點點 line-height 讓字體呼吸
+        // 3. 垂直 KPI：4px padding 達成 80% 的矮高度
         "th,td{border:1px solid #ddd; padding:4px 12px; text-align:left; line-height:1.4;}"
         "th{background-color:#eee; color:#555; font-weight:600; font-size:13px;}"
-        // 這裡改回 sans-serif，不再使用 Consolas，視覺會變得很柔和
+        // 4. 去除等寬字體，讓畫面更清爽
         "td{white-space:nowrap; font-family:inherit;}"
         "tr:nth-child(even){background-color:#fafafa;}"
         "tr:hover{background-color:#f1f1f1;}"
-        // 標題也維持精緻窄版
+        // 標題塊也改為窄版
         "h3{background-color:#444; color:white; padding:5px 15px; border-radius:3px; margin:20px 0 8px 0; display:inline-block; font-size:15px; font-weight:500;}"
         ".size-col{text-align:right; font-size:12px; color:#777;}"
         "a{text-decoration:none; color:#007bff; font-weight:500;}"
-        "a:hover{text-decoration:underline;}"
-        "</style></head><body>", // 移除 body inline style，改用 style tag 定義
+        "</style></head><body>",
         HTTPD_RESP_USE_STRLEN);
 
     httpd_resp_send_chunk(req, "<h2>QQMLAB Logger - File Explorer</h2>", HTTPD_RESP_USE_STRLEN);
