@@ -46,7 +46,9 @@ typedef struct sdlog_ctrl_source_s {
 
 typedef struct sdlog_ctrl_s {
     char *root;
-    uint32_t num_ch;
+    uint8_t num_ch;
+    uint8_t init;
+    uint8_t reserved[2];
     sdlog_ctrl_source_t source[SDLOG_SOURCE_NUM];
 
     // sdlog_task
@@ -298,6 +300,7 @@ void sdlog_task_init(void)
     if (xReturned != pdPASS) {
         ESP_LOGE("SDLOG TASK", "Failed to create task!");
     }
+    sdlog_ctrl.init = 1; // mark the service init completed
 }
 
 // ----------
@@ -374,4 +377,12 @@ uint32_t sdlog_webui_query(uint32_t source, sdlog_webui_status_t *p_status)
     }
 
     return 0;
+}
+
+// ----------
+// Query API from log_hub, check whether SDLOG init completed
+// ----------
+uint32_t sdlog_source_ready(uint32_t source)
+{
+    return sdlog_ctrl.init && (SDLOG_SOURCE(source)->fp);
 }

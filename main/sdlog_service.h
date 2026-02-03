@@ -25,6 +25,7 @@ enum sdlog_source_e {
 void sdlog_start(uint32_t source, uint64_t epoch_time);
 void sdlog_stop(uint32_t source);
 void sdlog_write(uint32_t source, uint32_t type_data, uint32_t len, const void *payload);
+uint32_t sdlog_source_ready(uint32_t source);
 
 // ----------
 // WEBUI API
