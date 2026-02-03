@@ -94,17 +94,24 @@ esp_err_t sdlog_exporter_text(sdlog_exporter_para_t *p_para)
 
         // write to the file
         uint32_t remaining_bytes = entry.payload_len;
+        uint32_t last_char       = 0;
         while (remaining_bytes) {
-            uint32_t payload_buf[256]; // read maximum 256byte one time
+            uint8_t payload_buf[256]; // read maximum 256byte one time
+
             uint32_t read_bytes = (remaining_bytes >= sizeof(payload_buf)) ? sizeof(payload_buf) : remaining_bytes;
-            if (fread(payload_buf, read_bytes, 1, p_para->fp_in) == 1) {
+            size_t n            = fread(payload_buf, 1, read_bytes, p_para->fp_in);
+
+            if (n > 0) {
                 fwrite(payload_buf, read_bytes, 1, p_para->fp_out);
                 remaining_bytes -= read_bytes;
+                last_char = payload_buf[read_bytes - 1];
             } else {
                 return ESP_FAIL;
             }
         }
-        fprintf(p_para->fp_out, "\n");
+        if (last_char != '\n') {
+            fputc(p_para->fp_out, '\n');
+        }
 
         // Handle padding, 8byte align
         _sdlog_exporter_fp_in_padding(p_para->fp_in, entry.payload_len);
