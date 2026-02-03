@@ -10,10 +10,17 @@
 
 static const char *TAG = "WIFI_MANAGER";
 
-static TaskHandle_t wifi_manager_task_handle;
-
 #define WIFI_SCAN_MAX_AP (10) // maximum AP# to scan of nearby AP
 #define WIFI_ENTRIES_MAX (10)
+
+typedef struct wifi_manager_s {
+    TaskHandle_t task_handle;
+    EventGroupHandle_t evt_grp;
+#define WIFI_EVT_BIT_CONNECTED (1 << 0)
+#define WIFI_EVT_BIT_GOT_IP (1 << 1)
+} wifi_manager_t;
+
+wifi_manager_t wifi_ctrl;
 
 // ----------
 // WIFI SSID entries
@@ -73,27 +80,30 @@ static void wifi_scan_and_connect(void)
     }
 
     // WIFI scan
-    wifi_scan_config_t scan_config = {0};                            // if no special purpose (for scan), just set to 0 is fine
-    ESP_ERROR_CHECK(esp_wifi_scan_start(&scan_config, /*block*/ 1)); // blocking wait
+    wifi_scan_config_t scan_config = {0};                                            // if no special purpose (for scan), just set to 0 is fine
+    esp_err_t res                  = esp_wifi_scan_start(&scan_config, /*block*/ 1); // blocking wait
 
-    uint16_t ap_num = WIFI_SCAN_MAX_AP; // tell the API maximum AP to scan, and got the scanned result
-    wifi_ap_record_t ap_records[WIFI_SCAN_MAX_AP];
-    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&ap_num, ap_records));
+    if (res == ESP_OK) {
+        uint16_t ap_num = WIFI_SCAN_MAX_AP; // tell the API maximum AP to scan, and got the scanned result
+        wifi_ap_record_t ap_records[WIFI_SCAN_MAX_AP];
+        ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&ap_num, ap_records));
 
-    for (int i = 0; i < ap_num; i++) {
-        for (int j = 0; j < known_network_cnt; j++) {
-            if (strcmp((char *)ap_records[i].ssid, known_network[j].ssid) == 0) {
-                wifi_entry_t *p_network = &known_network[j];
+        for (int i = 0; i < ap_num; i++) {
+            ESP_LOGD(TAG, "Seen AP: %s (RSSI: %d)", ap_records[i].ssid, ap_records[i].rssi);
+            for (int j = 0; j < known_network_cnt; j++) {
+                if (strcmp((char *)ap_records[i].ssid, known_network[j].ssid) == 0) {
+                    wifi_entry_t *p_network = &known_network[j];
 
-                ESP_LOGI(TAG, "Find match SSID %s, connect...", p_network->ssid);
+                    ESP_LOGI(TAG, "Find match SSID %s, connect...", p_network->ssid);
 
-                wifi_config_t wifi_config = {0};
-                strlcpy((char *)wifi_config.sta.ssid, p_network->ssid, 32);
-                strlcpy((char *)wifi_config.sta.password, p_network->pass, 64);
+                    wifi_config_t wifi_config = {0};
+                    strlcpy((char *)wifi_config.sta.ssid, p_network->ssid, 32);
+                    strlcpy((char *)wifi_config.sta.password, p_network->pass, 64);
 
-                ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
-                ESP_ERROR_CHECK(esp_wifi_connect());
-                return;
+                    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+                    ESP_ERROR_CHECK(esp_wifi_connect());
+                    return;
+                }
             }
         }
     }
@@ -110,20 +120,32 @@ static void server_up_when_ip_obtained(void)
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        ESP_LOGI(TAG, "Start to connect AP...");
-        if (wifi_manager_task_handle) {
-            xTaskNotifyGive(wifi_manager_task_handle);
+    if (event_base == WIFI_EVENT) {
+        if (event_id == WIFI_EVENT_STA_START) {
+            ESP_LOGI(TAG, "Start to connect AP...");
+            if (wifi_ctrl.task_handle) {
+                xTaskNotifyGive(wifi_ctrl.task_handle);
+            }
+
+        } else if (event_id == WIFI_EVENT_STA_CONNECTED) { // WIFI handshare success, password correct, connect to AP
+            ESP_LOGI(TAG, "Connected to AP (L2 Link Up)");
+            xEventGroupSetBits(wifi_ctrl.evt_grp, WIFI_EVT_BIT_CONNECTED);
+
+        } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
+            ESP_LOGI(TAG, "Disconnected. Scanning for other known networks...");
+            xEventGroupClearBits(wifi_ctrl.evt_grp, WIFI_EVT_BIT_CONNECTED | WIFI_EVT_BIT_GOT_IP);
+            if (wifi_ctrl.task_handle) {
+                xTaskNotifyGive(wifi_ctrl.task_handle);
+            }
         }
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGI(TAG, "Disconnected. Scanning for other known networks...");
-        if (wifi_manager_task_handle) {
-            xTaskNotifyGive(wifi_manager_task_handle);
+
+    } else if (event_base == IP_EVENT) {
+        if (event_id == IP_EVENT_STA_GOT_IP) {
+            ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
+            ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+            server_up_when_ip_obtained();
+            xEventGroupSetBits(wifi_ctrl.evt_grp, WIFI_EVT_BIT_GOT_IP);
         }
-    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-        ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
-        server_up_when_ip_obtained();
     }
 }
 
@@ -134,12 +156,26 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
 static void wifi_manager_background_task(void *pvParameters)
 {
     while (1) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        static uint32_t no_ip_count = 0;
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10000)); // Check the WIFI connection every
 
-        ESP_LOGW(TAG, "WIFI Manager: got connection request, wait 2sec...");
-        vTaskDelay(pdMS_TO_TICKS(2000));
-        wifi_scan_and_connect();
-        ESP_LOGI(TAG, "Connection Manager: connect completed");
+        ESP_LOGW(TAG, "WIFI Manager: Wakeup to check the WIFI status..");
+
+        EventBits_t bits = xEventGroupGetBits(wifi_ctrl.evt_grp);
+        if ((bits & WIFI_EVT_BIT_CONNECTED) == 0) { // not connected to IP, scan & connect
+            wifi_scan_and_connect();
+            no_ip_count = 0;
+
+        } else if ((bits & WIFI_EVT_BIT_GOT_IP) == 0) { // connected to AP but no wifi, maybe re-run DHCP or re-connect
+            no_ip_count++;
+            ESP_LOGW(TAG, "Connected but no IP... (Attempt %lu)", no_ip_count);
+
+            if (no_ip_count > 3) { // if no IP after 30seconds, 3x * 10s, then retry
+                ESP_LOGE(TAG, "DHCP Timeout! Force disconnect and retry.");
+                esp_wifi_disconnect();
+                no_ip_count = 0;
+            }
+        }
     }
 }
 
@@ -154,7 +190,8 @@ esp_err_t wifi_sta_init(void)
     wifi_manager_add_known_network();
 
     // Start the WIFI manager background task
-    xTaskCreate(wifi_manager_background_task, "wifi_mgr_task", 4096, NULL, 5, &wifi_manager_task_handle);
+    wifi_ctrl.evt_grp = xEventGroupCreate();
+    xTaskCreate(wifi_manager_background_task, "wifi_mgr_task", 4096, NULL, 5, &wifi_ctrl.task_handle);
 
     // Init TCP/IP & WIFI (only once)
     ESP_ERROR_CHECK(esp_netif_init());
@@ -163,12 +200,15 @@ esp_err_t wifi_sta_init(void)
     esp_netif_set_hostname(sta_netif, syscfg_system_p()->hostname);
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    esp_event_handler_instance_t instance_any_id;
-    esp_event_handler_instance_t instance_got_ip;
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, &instance_any_id));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, &instance_got_ip));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
 
     return ESP_OK;
 }
+
+// ----------
+// TODO
+// ----------
+// 1. We can connect to the AP with the strongest RSSI
