@@ -11,24 +11,24 @@ void start_mdns_service(void)
 
     esp_err_t err = mdns_init();
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "mDNS Init failed: %d", err);
-        return;
+        if (err == ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(TAG, "mDNS already running.");
+        } else {
+            ESP_LOGE(TAG, "mDNS Init failed: 0x%x", err);
+            return;
+        }
     }
 
-    // Configure mdns hostname, http://hostname.local/
-    mdns_hostname_set(hostname);
+    // print something if these messages failed
+    if (mdns_hostname_set(hostname) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set mDNS hostname");
+    }
 
-    // Configure device instance name (showed in Bonjour explorer)
     mdns_instance_name_set(hostname);
+    mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
 
-    // Let other devices the functionalty that the ESP32 provided
-    mdns_service_add(
-        /*instance name*/ NULL, // null if use the instance name above
-        /*service type*/ "_http",
-        /*protocol*/ "_tcp",
-        /*port*/ 80,
-        /*TXT record*/ NULL,
-        /*TXT record#*/ 0);
-
-    ESP_LOGI(TAG, "mDNS Ready! Access via: http://%s.local", hostname);
+    ESP_LOGI(TAG, "mDNS setup done for http://%s.local", hostname);
 }
+
+// TODO: AI suggested to add meta status over mDNS broadcast info
+// For example, bus=load, packets=1200
