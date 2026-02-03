@@ -5,6 +5,7 @@
 #include "board.h"
 #include "wifi_passwd.h"
 #include "http_server.h"
+#include "mdns_service.h"
 #include "syscfg.h"
 
 static const char *TAG = "WIFI_MANAGER";
@@ -104,7 +105,6 @@ static void wifi_scan_and_connect(void)
 static void server_up_when_ip_obtained(void)
 {
     http_server_start();
-    void start_mdns_service(void);
     start_mdns_service();
 }
 
