@@ -30,6 +30,7 @@ void sdlog_write(uint32_t source, uint32_t type_data, uint32_t len, const void *
 // WEBUI API
 // ----------
 typedef struct sdlog_webui_status_s {
+    const char *name;
     uint32_t is_logging;
     uint32_t bytes_written;
 } sdlog_webui_status_t;

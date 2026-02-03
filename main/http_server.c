@@ -175,7 +175,6 @@ esp_err_t uri_index(httpd_req_t *req)
     http_server_send_resp_chunk_f(req, "<h3>SD Logging Control</h3><p>");
 
     for (int i = 0; i < SDLOG_SOURCE_NUM; i++) {
-        const char *ch_names[] = {"HTTP", "CAN"}; // maybe we can place these name setting in sdlog_service later
         sdlog_webui_status_t status;
         sdlog_webui_query(i, &status);
 
@@ -184,7 +183,7 @@ esp_err_t uri_index(httpd_req_t *req)
             "  <button onclick='doStart(%d)' %s>START</button> "
             "  <button onclick='doStop(%d)' %s>STOP</button> "
             "  <i>(Written: %" PRIu32 " bytes)</i><br>",
-            i, ch_names[i], status.is_logging ? "&#128308; <b style='color:red;'>[REC]</b>" : "&#9898; IDLE",
+            i, status.name, status.is_logging ? "&#128308; <b style='color:red;'>[REC]</b>" : "&#9898; IDLE",
             i, status.is_logging ? "disabled" : "", // Recording, no press START
             i, status.is_logging ? "" : "disabled", // IDLE, no press STOP
             status.bytes_written);
@@ -341,18 +340,19 @@ esp_err_t uri_browse_log(httpd_req_t *req)
     httpd_resp_send_chunk(req, "<h2>QQMLAB Logger - File Explorer</h2>", HTTPD_RESP_USE_STRLEN);
 
     // Define the category that we want to display. Static first, dynamic later
-    const char *categories[]  = {"CAN", "HTTP", "CONSOLE"};
-    const char *sub_folders[] = {"/can", "/http", "/console"};
-    for (uint32_t i = 0; i < sizeof(categories) / sizeof(char *); i++) {
+    for (uint32_t i = 0; i < SDLOG_SOURCE_NUM; i++) {
+        sdlog_webui_status_t status;
+        sdlog_webui_query(i, &status);
+
         // TITLE
-        http_server_send_resp_chunk_f(req, "<h3>[ %s ]</h3>", categories[i]);
+        http_server_send_resp_chunk_f(req, "<h3>[ %s ]</h3>", status.name);
 
         // BEGIN OF TABLE
         httpd_resp_send_chunk(req, "<table><tr><th>File Path</th><th>Size</th><th>Action</th><th>Conv</th><th>Remove</th></tr>", HTTPD_RESP_USE_STRLEN);
 
         // Generate target path, and scan
         char target_path[64];
-        snprintf(target_path, sizeof(target_path), MNT_SDCARD "/log%s", sub_folders[i]);
+        snprintf(target_path, sizeof(target_path), MNT_SDCARD "/log/%s", status.name);
         uri_browse_log_recursive(req, target_path, admin_mode);
 
         // END OF TABLE

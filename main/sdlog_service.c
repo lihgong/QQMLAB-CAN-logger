@@ -366,6 +366,7 @@ uint32_t sdlog_webui_query(uint32_t source, sdlog_webui_status_t *p_status)
 
     if (source < SDLOG_SOURCE_NUM) {
         sdlog_ctrl_source_t *p_src = SDLOG_SOURCE(source);
+        p_status->name             = p_src->name;
         if (p_src->fp) {
             p_status->is_logging    = 1;
             p_status->bytes_written = p_src->bytes_written;
