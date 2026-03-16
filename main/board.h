@@ -12,7 +12,6 @@
 // TWAI config
 // ----------
 #define TWAI_RXBUF (128)
-#define TWAI_SPEED (0) // 0:125, 1:500
 
 // ----------
 // BOARD SELECT

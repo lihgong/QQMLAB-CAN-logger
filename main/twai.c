@@ -8,6 +8,9 @@
 static const char *TAG = "TWAI";
 static twai_webui_status_t twai_webui_stat;
 
+#define TWAI_SPEED_125K (0)
+#define TWAI_SPEED_500K (1)
+static uint8_t twai_speed = TWAI_SPEED_125K;
 static void twai_rx_task(void *arg)
 {
     twai_message_t msg;
@@ -39,7 +42,7 @@ esp_err_t twai_service_init(void)
         twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(TWAI_PIN_TX, TWAI_PIN_RX, TWAI_MODE_NORMAL);
         g_config.rx_queue_len          = TWAI_RXBUF;
         twai_timing_config_t t_config;
-        if (TWAI_SPEED == 0) {
+        if (twai_speed == TWAI_SPEED_125K) {
             t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_125KBITS();
         } else {
             t_config = (twai_timing_config_t)TWAI_TIMING_CONFIG_500KBITS();
@@ -49,7 +52,7 @@ esp_err_t twai_service_init(void)
         // 3. Start the TWAI driver
         ESP_ERROR_CHECK(twai_driver_install(&g_config, &t_config, &f_config));
         ESP_ERROR_CHECK(twai_start());
-        ESP_LOGI(TAG, "TWAI bus init, tx_pin=%d, rx_pin=%d, standby=%d, speed=%s", TWAI_PIN_TX, TWAI_PIN_RX, TWAI_PIN_STANDBY, (TWAI_SPEED == 0) ? "125K" : "500K");
+        ESP_LOGI(TAG, "TWAI bus init, tx_pin=%d, rx_pin=%d, standby=%d, speed=%s", TWAI_PIN_TX, TWAI_PIN_RX, TWAI_PIN_STANDBY, (twai_speed == TWAI_SPEED_125K) ? "125K" : "500K");
 
         // 4. Start the TWAI task, whose priority is #6, which is higher than HTTP (5)
         xTaskCreate(twai_rx_task, "twai_rx", 4096, NULL, 6, NULL);
@@ -79,4 +82,23 @@ esp_err_t twai_webui_transmit(uint32_t can_id, uint32_t data_len, uint8_t *p_dat
     memcpy(tx_msg.data, p_data, data_len);
 
     return twai_transmit(&tx_msg, pdMS_TO_TICKS(100));
+}
+
+// ----------
+// CAN bus syscfg
+// ----------
+uint32_t can_bus_syscfg(const char *section, const char *key, const char *value)
+{
+    if (strcmp(section, "can_bus") == 0) {
+        if (strcmp(key, "speed") == 0) {
+            if (strcmp(value, "125") == 0) {
+                twai_speed = TWAI_SPEED_125K;
+            } else {
+                twai_speed = TWAI_SPEED_500K;
+            }
+            ESP_LOGI(TAG, "can_bus_syscfg with twai_speed=%d(0:125, 1:500)", twai_speed);
+        }
+    }
+
+    return 1;
 }
