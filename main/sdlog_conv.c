@@ -110,7 +110,7 @@ esp_err_t sdlog_exporter_text(sdlog_exporter_para_t *p_para)
             }
         }
         if (last_char != '\n') {
-            fputc(p_para->fp_out, '\n');
+            fputc('\n', p_para->fp_out);
         }
 
         // Handle padding, 8byte align
