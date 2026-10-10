@@ -3,6 +3,7 @@
 #include <stdarg.h>
 
 #include "esp_http_server.h"
+#include "esp_ota_ops.h"
 #include "esp_log.h"
 
 #include "board.h"
@@ -161,16 +162,21 @@ esp_err_t uri_index(httpd_req_t *req)
         strcat(led_stat_buf, (led_stat & (1 << i)) ? "ON, " : "OFF, ");
     }
 
+    const esp_app_desc_t *desc     = esp_app_get_description();
+    const esp_partition_t *running = esp_ota_get_running_partition();
     http_server_send_resp_chunk_f(req,
         "<html>"
         "<head><title>QQMLAB CAN Logger</title></head>"
         "<h1>QQMLAB CAN LOGGER</h1>"
         "<h3>Status</h3>"
-        "<p>Board: %s | Free RAM: %lu bytes</p>"
+        "<p>Board: %s | Free RAM: %lu bytes | FW: %s (%s %s) | Running partition: %s</p>"
         "<p>LED Status: <b>%s</b></p>"
         "<p>CAN RX:%lu TX:%lu</p>"
         "<hr>",
-        BOARD_NAME, esp_get_free_heap_size(), led_stat_buf, twai_status.rx_pkt, twai_status.tx_pkt);
+        BOARD_NAME, esp_get_free_heap_size(),
+        desc->version, desc->date, desc->time,
+        running ? running->label : "factory_null",
+        led_stat_buf, twai_status.rx_pkt, twai_status.tx_pkt);
 
     http_server_send_resp_chunk_f(req, "<h3>SD Logging Control</h3><p>");
 
