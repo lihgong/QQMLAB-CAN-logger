@@ -169,12 +169,12 @@ esp_err_t uri_index(httpd_req_t *req)
         "<head><title>QQMLAB CAN Logger</title></head>"
         "<h1>QQMLAB CAN LOGGER</h1>"
         "<h3>Status</h3>"
-        "<p>Board: %s | Free RAM: %lu bytes | FW: %s (%s %s) | Running partition: %s</p>"
+        "<p>Board: %s | Free RAM: %lu bytes | FW: %s (%s %s) | Built time: %s %s | Running partition: %s</p>"
         "<p>LED Status: <b>%s</b></p>"
         "<p>CAN RX:%lu TX:%lu</p>"
         "<hr>",
         BOARD_NAME, esp_get_free_heap_size(),
-        desc->version, desc->date, desc->time,
+        desc->version, desc->date, desc->time, __DATE__, __TIME__,
         running ? running->label : "factory_null",
         led_stat_buf, twai_status.rx_pkt, twai_status.tx_pkt);
 
