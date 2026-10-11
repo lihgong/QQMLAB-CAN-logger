@@ -4,8 +4,18 @@
     "board/esp32c3-builtin.cfg"
   ],
   "idf.customExtraVars": {
-    "IDF_TARGET": "esp32c3"
+    "IDF_TARGET": "esp32c3",
+    "OPENOCD_USB_ADAPTER_LOCATION": "2-3"
   },
   "idf.flashType": "JTAG",
   "idf.svdFilePath": "${workspaceFolder}/svd/esp32c3.svd",
+  "clangd.path": "C:\\Users\\lihgo\\.espressif\\tools\\esp-clang\\esp-19.1.2_20250312\\esp-clang\\bin\\clangd.exe",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=**",
+    "--compile-commands-dir=c:\\Users\\lihgo\\github\\QQMLAB-CAN-logger\\build"
+  ],
+  "idf.port": "COM3",
+  "idf.currentSetup": "C:\\Users\\lihgo\\esp\\v5.5.2\\esp-idf",
+  "idf.monitorPort": "COM3",
 }
