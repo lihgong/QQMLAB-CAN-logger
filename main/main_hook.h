@@ -1,6 +1,7 @@
 APP_MAIN_INIT_FUNC(nvs_init)
 APP_MAIN_INIT_FUNC(led_init)
 APP_MAIN_INIT_FUNC(sd_card_init)
+APP_MAIN_INIT_FUNC(sd_ota_init) // run after sd_card init, and before other services
 APP_MAIN_INIT_FUNC(syscfg_init) // this must after sd_card_init
 APP_MAIN_INIT_FUNC(sdlog_service_init)
 APP_MAIN_INIT_FUNC(twai_service_init)
