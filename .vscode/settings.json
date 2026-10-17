@@ -15,7 +15,7 @@
     "--query-driver=**",
     "--compile-commands-dir=c:\\Users\\lihgo\\github\\QQMLAB-CAN-logger\\build"
   ],
-  "idf.port": "COM3",
+  "idf.port": "COM4",
   "idf.currentSetup": "C:\\Users\\lihgo\\esp\\v5.5.2\\esp-idf",
-  "idf.monitorPort": "COM3",
+  "idf.monitorPort": "COM4",
 }

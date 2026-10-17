@@ -1,6 +1,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <stdarg.h>
+#include <unistd.h>
 
 #include "esp_http_server.h"
 #include "esp_ota_ops.h"
@@ -138,7 +139,7 @@ static void uri_index_sdlog_msg_handle(char *buf)
     }
 }
 
-esp_err_t uri_index(httpd_req_t *req)
+static esp_err_t uri_index(httpd_req_t *req)
 {
     // Handle GET
     char buf[128]; // No very long query string here, fixed size here to avoid buffer overflow
@@ -223,6 +224,45 @@ esp_err_t uri_index(httpd_req_t *req)
 
         HTTPD_RESP_USE_STRLEN);
 
+    httpd_resp_send_chunk(req,
+        "<hr>"
+        "<h3>Firmware OTA Update</h3>"
+        "<div>"
+        "  <input type='file' id='fw_file' accept='.bin'>"
+        "  <button id='upload_btn' onclick='uploadFirmware()'>Upload & Upgrade</button>"
+        "</div>"
+        "<div id='status_msg' style='margin-top:8px; font-weight:bold; color:#0055aa;'></div>"
+        "<script>"
+        "function uploadFirmware() {"
+        "  const fi = document.getElementById('fw_file');"
+        "  const msg = document.getElementById('status_msg');"
+        "  const btn = document.getElementById('upload_btn');"
+        "  if (!fi.files.length) { alert('Select .bin FW!'); return; }"
+        "  const file = fi.files[0];"
+        "  if (file.size > 4 * 1024 * 1024) { alert('Filesize must <= 4.0MB'); return; }"
+        "  btn.disabled = true;"
+        "  msg.innerText = 'FW uploading, do not turn off browser...';"
+        "  fetch('/upload_firmware', {"
+        "    method: 'POST',"
+        "    headers: {'Content-Type': 'application/octet-stream'},"
+        "    body: file"
+        "  })"
+        "  .then(res => {"
+        "    if (res.ok) {"
+        "      msg.innerText = 'Upload success, system is flashing; reconnect in 6s...';"
+        "      setTimeout(() => { location.reload(); }, 6000);"
+        "    } else {"
+        "      return res.text().then(t => { throw new Error(t); });"
+        "    }"
+        "  })"
+        "  .catch(err => {"
+        "    msg.innerText = 'upload fail: ' + err.message;"
+        "    btn.disabled = false;"
+        "  });"
+        "}"
+        "</script>",
+        HTTPD_RESP_USE_STRLEN);
+
     if (can_tx_list.num) {
         http_server_send_resp_chunk_f(req, "<hr><h3>VOLVO TAILGATE operate command</h3>");
         for (uint32_t i = 0; i < can_tx_list.num; i++) {
@@ -305,7 +345,7 @@ static esp_err_t uri_browse_log_recursive(httpd_req_t *req, const char *dir_path
     return ESP_OK;
 }
 
-esp_err_t uri_browse_log(httpd_req_t *req)
+static esp_err_t uri_browse_log(httpd_req_t *req)
 {
     char buf[32];
 
@@ -458,17 +498,17 @@ static esp_err_t _log_op(httpd_req_t *req, uint32_t op_0download_1remove_2conv)
     }
 }
 
-esp_err_t uri_log_download(httpd_req_t *req)
+static esp_err_t uri_log_download(httpd_req_t *req)
 {
     return _log_op(req, 0); // download
 }
 
-esp_err_t uri_log_remove(httpd_req_t *req)
+static esp_err_t uri_log_remove(httpd_req_t *req)
 {
     return _log_op(req, 1); // remove
 }
 
-esp_err_t uri_log_conv(httpd_req_t *req)
+static esp_err_t uri_log_conv(httpd_req_t *req)
 {
     return _log_op(req, 2); // conversion
 }
@@ -497,7 +537,7 @@ static void hex_to_bytes(const char *hex, uint8_t *dest, int byte_len)
     }
 }
 
-esp_err_t uri_can_tx(httpd_req_t *req)
+static esp_err_t uri_can_tx(httpd_req_t *req)
 {
     char buf[128];
     if (httpd_req_get_url_query_len(req)) {
@@ -531,6 +571,102 @@ esp_err_t uri_can_tx(httpd_req_t *req)
 }
 
 // ----------
+// URI: /upload_firmware
+// ----------
+static const char *TAG_HTTP_OTA = "HTTP_OTA";
+
+#define MAX_FW_SIZE (1664 * 1024) // 1.625 MB // FIXME: make this as some kind of systemwide cfg
+#define SD_OTA_TMP_PATH "/sdcard/update.bin.tmp"
+#define SD_OTA_TARGET_PATH "/sdcard/update.bin"
+#define FW_UPDATE_RECV_BUF_SIZE 4096
+
+static void deferred_restart_task(void *pvParameter)
+{
+    vTaskDelay(pdMS_TO_TICKS(1000)); // Delay 1s to ensure packet send out
+    esp_restart();
+}
+
+esp_err_t uri_upload_firmware(httpd_req_t *req)
+{
+    ESP_LOGI(TAG_HTTP_OTA, "QQQQ");
+    do {
+        if (req->content_len <= 0 || req->content_len > MAX_FW_SIZE) {
+            ESP_LOGE(TAG_HTTP_OTA, "Invalid Content-Length: %d bytes (Limit: %d)", req->content_len, MAX_FW_SIZE);
+            httpd_resp_send_err(req, HTTPD_413_CONTENT_TOO_LARGE, "File size exceeds partition limit (Max 1.625MB)");
+            break;
+        }
+        ESP_LOGI(TAG_HTTP_OTA, "Receiving firmware image, size: %d bytes", req->content_len);
+
+        FILE *f = fopen(SD_OTA_TMP_PATH, "wb");
+        if (!f) {
+            ESP_LOGE(TAG_HTTP_OTA, "Failed to open temporary file: %s", SD_OTA_TMP_PATH);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Cannot open file on SD card");
+            break;
+        }
+
+        char *buf = malloc(FW_UPDATE_RECV_BUF_SIZE);
+        if (!buf) {
+            fclose(f);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Heap memory allocation failed");
+            break;
+        }
+
+        // Allocate buf, file, and start to receive the FW
+        int32_t remaining = req->content_len;
+        while (remaining > 0) {
+            int32_t to_read  = (remaining > FW_UPDATE_RECV_BUF_SIZE) ? FW_UPDATE_RECV_BUF_SIZE : remaining;
+            int32_t received = httpd_req_recv(req, buf, to_read);
+
+            if (received <= 0) {
+                if (received == HTTPD_SOCK_ERR_TIMEOUT) {
+                    continue; // Encounter socket timeout, keep retrying
+                }
+                ESP_LOGE(TAG_HTTP_OTA, "Connection error during upload (err=%d)", received);
+                free(buf);
+                fclose(f);
+                unlink(SD_OTA_TMP_PATH); // remove uncompleted file
+                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Upload transfer interrupted");
+                break;
+            }
+
+            size_t written = fwrite(buf, 1, received, f);
+            if (written != (size_t)received) {
+                ESP_LOGE(TAG_HTTP_OTA, "Failed to write data to SD card!");
+                free(buf);
+                fclose(f);
+                unlink(SD_OTA_TMP_PATH);
+                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "SD write error");
+                break;
+            }
+
+            remaining -= received;
+        }
+        free(buf);
+        fclose(f);
+
+        // If the FW already existing, delete it
+        unlink(SD_OTA_TARGET_PATH);
+        if (rename(SD_OTA_TMP_PATH, SD_OTA_TARGET_PATH) != 0) {
+            ESP_LOGE(TAG_HTTP_OTA, "Failed to rename tmp file to %s", SD_OTA_TARGET_PATH);
+            unlink(SD_OTA_TMP_PATH);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to finalize update file");
+            break;
+        }
+        ESP_LOGI(TAG_HTTP_OTA, "Firmware saved to %s successfully. Scheduling restart...", SD_OTA_TARGET_PATH);
+
+        // Response browser
+        const char *resp = "OK";
+        httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+
+        // Reboot the system
+        xTaskCreate(deferred_restart_task, "restart_task", 2048, NULL, 5, NULL);
+
+        return ESP_OK;
+    } while (0);
+    return ESP_FAIL;
+}
+
+// ----------
 // HTTP server start body
 // ----------
 void http_server_start(void)
@@ -549,6 +685,7 @@ void http_server_start(void)
                 {.uri = "/log_remove", .method = HTTP_GET, .handler = uri_log_remove, .user_ctx = NULL},
                 {.uri = "/log_conv", .method = HTTP_GET, .handler = uri_log_conv, .user_ctx = NULL},
                 {.uri = "/can_tx", .method = HTTP_GET, .handler = uri_can_tx, .user_ctx = NULL},
+                {.uri = "/upload_firmware", .method = HTTP_POST, .handler = uri_upload_firmware, .user_ctx = NULL},
             };
 
             for (uint32_t i = 0; i < sizeof(uri_tbl) / sizeof(httpd_uri_t); i++) {
