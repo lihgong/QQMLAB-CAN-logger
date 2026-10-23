@@ -5,5 +5,6 @@ APP_MAIN_INIT_FUNC(sd_ota_init) // run after sd_card init, and before other serv
 APP_MAIN_INIT_FUNC(syscfg_init) // this must after sd_card_init
 APP_MAIN_INIT_FUNC(sdlog_service_init)
 APP_MAIN_INIT_FUNC(twai_service_init)
+APP_MAIN_INIT_FUNC(ble_beacon_init)
 APP_MAIN_INIT_FUNC(wifi_sta_init)
 APP_MAIN_INIT_FUNC(log_hub_init)

@@ -6,6 +6,7 @@
 #include "wifi_passwd.h"
 #include "http_server.h"
 #include "mdns_service.h"
+#include "ble_beacon.h"
 #include "syscfg.h"
 
 static const char *TAG = "WIFI_MANAGER";
@@ -137,6 +138,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
             if (wifi_ctrl.task_handle) {
                 xTaskNotifyGive(wifi_ctrl.task_handle);
             }
+            ble_beacon_update_ip_name(NULL);
         }
 
     } else if (event_base == IP_EVENT) {
@@ -145,6 +147,11 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
             ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
             server_up_when_ip_obtained();
             xEventGroupSetBits(wifi_ctrl.evt_grp, WIFI_EVT_BIT_GOT_IP);
+
+            // notify bluetooth to change DEV-NAME
+            char ip_str[24];
+            snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&event->ip_info.ip));
+            ble_beacon_update_ip_name(ip_str);
         }
     }
 }
