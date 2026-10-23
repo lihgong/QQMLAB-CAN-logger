@@ -588,7 +588,6 @@ static void deferred_restart_task(void *pvParameter)
 
 esp_err_t uri_upload_firmware(httpd_req_t *req)
 {
-    ESP_LOGI(TAG_HTTP_OTA, "QQQQ");
     do {
         if (req->content_len <= 0 || req->content_len > MAX_FW_SIZE) {
             ESP_LOGE(TAG_HTTP_OTA, "Invalid Content-Length: %d bytes (Limit: %d)", req->content_len, MAX_FW_SIZE);
