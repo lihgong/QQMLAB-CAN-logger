@@ -15,7 +15,7 @@
 static const char *TAG = "SD_OTA";
 
 #define SD_OTA_FILE_PATH "/sdcard/update.bin"
-#define SD_OTA_DONE_PATH "/sdcard/update.bin.done"
+#define SD_OTA_DONE_PATH "/sdcard/_update.bin"
 #define OTA_BUFF_SIZE (4096)
 #define OTA_REBOOT_TIMEOUT_MS (1000)
 
