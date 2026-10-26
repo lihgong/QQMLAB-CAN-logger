@@ -5,6 +5,10 @@
 
 #include "board.h"
 
+#define SD_CARD_MAX_FILES_DEF (3)
+// With long file name, each file takes 4.5KB (tremendous!!)
+// TODO: review why I need long file name, avoid it
+
 static sdmmc_card_t *sdcard = NULL; // keep global reference to the card
 static const char *TAG      = "SDCARD";
 
@@ -26,7 +30,7 @@ esp_err_t sd_card_init(void)
 {
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
         .format_if_mount_failed = false, // no auto format
-        .max_files              = 5,
+        .max_files              = SD_CARD_MAX_FILES_DEF,
         .allocation_unit_size   = 16 * 1024};
 
 #if defined(SDCARD_IN_SDMMC)
