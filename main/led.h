@@ -13,6 +13,12 @@
 #error "Wrong LED PIN configuration"
 #endif
 
+enum {
+    LED_OP_ON0,
+    LED_OP_OFF1,
+    LED_OP_TOGGLE2,
+};
+
 void led_op_ext(uint32_t led_idx, uint32_t op_0on_1off_2toggle);
 void led_op(uint32_t op_0on_1off_2toggle);
 uint32_t led_is_on_bmp(void);

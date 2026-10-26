@@ -75,7 +75,7 @@ esp_err_t sd_ota_init(void)
             total_written += bytes_read;
             int cur_pct = (int)((total_written * 100) / st.st_size);
             ESP_LOGI(TAG, "OTA Progress: %d%% (%u / %ld bytes)", cur_pct, (unsigned)total_written, st.st_size);
-            led_op(2); // toggle LED
+            led_op(LED_OP_TOGGLE2); // toggle LED
         }
 
         free(buf);

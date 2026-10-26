@@ -34,7 +34,7 @@ static int log_hub_vprintf_handler(const char *fmt, va_list args)
         }
     }
 
-    led_op_ext(/*led_idx*/ 1, /*led_op=2, toggle*/ 2);
+    led_op_ext(/*led_idx*/ 1, LED_OP_TOGGLE2);
 
     return len;
 }

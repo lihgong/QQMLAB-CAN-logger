@@ -22,7 +22,7 @@ static void twai_rx_task(void *arg)
             sdlog_write(SDLOG_SOURCE_CAN, /*data_type*/ 0, sizeof(msg), &msg);
 
             // Make LED toggle to show the packet arriving
-            led_op(/*op_0on_1off_2toggle*/ 2);
+            led_op(LED_OP_TOGGLE2);
 
             // Observe CAN packet in Console
             // ESP_LOGI(TAG, "ID: 0x%03lX DLC:%d Data: %02x %02x...", msg.identifier, msg.data_length_code, msg.data[0], msg.data[1]);

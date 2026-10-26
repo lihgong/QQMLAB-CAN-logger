@@ -107,11 +107,11 @@ static void uri_index_led_msg_handle(char *buf)
     char param[16];
     if (httpd_query_key_value(buf, "led_op", param, sizeof(param)) == ESP_OK) {
         if (strcmp(param, "0") == 0) {
-            led_op(0);
+            led_op(LED_OP_ON0);
         } else if (strcmp(param, "1") == 0) {
-            led_op(1);
+            led_op(LED_OP_OFF1);
         } else if (strcmp(param, "2") == 0) {
-            led_op(2);
+            led_op(LED_OP_TOGGLE2);
         }
     }
 }
