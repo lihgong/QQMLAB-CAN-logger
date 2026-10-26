@@ -576,7 +576,7 @@ static esp_err_t uri_can_tx(httpd_req_t *req)
 static const char *TAG_HTTP_OTA = "HTTP_OTA";
 
 #define MAX_FW_SIZE (1664 * 1024) // 1.625 MB // FIXME: make this as some kind of systemwide cfg
-#define SD_OTA_TMP_PATH "/sdcard/update.bin.tmp"
+#define SD_OTA_TMP_PATH "/sdcard/update.tmp"
 #define SD_OTA_TARGET_PATH "/sdcard/update.bin"
 #define FW_UPDATE_RECV_BUF_SIZE 4096
 
