@@ -5,9 +5,8 @@
 
 #include "board.h"
 
+// Each file occupies ~4.5KB storage buffer, and we reduce to 3 files for normal operation
 #define SD_CARD_MAX_FILES_DEF (3)
-// With long file name, each file takes 4.5KB (tremendous!!)
-// TODO: review why I need long file name, avoid it
 
 static sdmmc_card_t *sdcard = NULL; // keep global reference to the card
 static const char *TAG      = "SDCARD";
