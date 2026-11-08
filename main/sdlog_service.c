@@ -23,7 +23,12 @@
 static const char *TAG = "SDLOG";
 
 #define SDLOG_ROOT (MNT_SDCARD "/log")
-#define SDLOG_TASK_INBUF_SZ (32768)
+
+#define SDLOG_TASK_INBUF_DEF (16 * 1024)
+#define SDLOG_TASK_INBUF_MIN (8 * 1024)
+#define SDLOG_TASK_INBUF_MAX (64 * 1024)
+static uint32_t _sdlog_inbuf_sz = SDLOG_TASK_INBUF_DEF;
+
 #define SDLOG_FILE_BUF_SZ (4096)
 
 // FIXME: in the sdlog service, we may encounter that sdcard service is not ready
@@ -286,7 +291,7 @@ void sdlog_task(void *param)
 
 void sdlog_task_init(void)
 {
-    sdlog_ctrl.sdlog_task_inbuf = xRingbufferCreate(SDLOG_TASK_INBUF_SZ, RINGBUF_TYPE_NOSPLIT);
+    sdlog_ctrl.sdlog_task_inbuf = xRingbufferCreate(_sdlog_inbuf_sz, RINGBUF_TYPE_NOSPLIT);
     assert(sdlog_ctrl.sdlog_task_inbuf);
 
     BaseType_t xReturned = xTaskCreate(
@@ -385,4 +390,29 @@ uint32_t sdlog_webui_query(uint32_t source, sdlog_webui_status_t *p_status)
 uint32_t sdlog_source_ready(uint32_t source)
 {
     return sdlog_ctrl.init && (SDLOG_SOURCE(source)->fp);
+}
+
+// ----------
+// SDLOG syscfg
+// ----------
+// [sdlog]
+// inbuf_kb = 16
+
+uint32_t sdlog_syscfg(const char *section, const char *key, const char *value)
+{
+    if (strcmp(section, "sdlog") == 0) {
+        if (strcmp(key, "inbuf_kb") == 0) {
+            assert(value != NULL);
+
+            char *endptr    = NULL;
+            uint32_t val_kb = strtol(value, &endptr, 10);
+            assert(endptr != value && *endptr == '\0'); // ensure the value to be integer
+
+            uint32_t val_bytes = val_kb * 1024;
+            assert(val_bytes >= SDLOG_TASK_INBUF_MIN && val_bytes <= SDLOG_TASK_INBUF_MAX); // ensure the configured value between min/max
+            _sdlog_inbuf_sz = (uint32_t)val_bytes;
+            ESP_LOGI(TAG, "sd_log.inbuf_kb configured to %ld KB (%lu bytes)", val_kb, _sdlog_inbuf_sz);
+        }
+    }
+    return 1;
 }
