@@ -12,6 +12,7 @@
 #include "sdlog_service.h"
 #include "sdlog_conv.h"
 #include "twai.h"
+#include "wifi_manager.h"
 
 static const char *TAG = "HTTP_SERVER";
 
@@ -171,12 +172,14 @@ static esp_err_t uri_index(httpd_req_t *req)
         "<h1>QQMLAB CAN LOGGER</h1>"
         "<h3>Status</h3>"
         "<p>Board: %s | Free RAM: %lu bytes | FW: %s (%s %s) | Built time: %s %s | Running partition: %s</p>"
+        "<p>WIFI IP: <b>%s</b></p>"
         "<p>LED Status: <b>%s</b></p>"
         "<p>CAN RX:%lu TX:%lu</p>"
         "<hr>",
         BOARD_NAME, esp_get_free_heap_size(),
         desc->version, desc->date, desc->time, __DATE__, __TIME__,
         running ? running->label : "factory_null",
+        wifi_get_ip_str(),
         led_stat_buf, twai_status.rx_pkt, twai_status.tx_pkt);
 
     http_server_send_resp_chunk_f(req, "<h3>SD Logging Control</h3><p>");

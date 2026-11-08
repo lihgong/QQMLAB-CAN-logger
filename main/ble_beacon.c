@@ -8,15 +8,7 @@
 
 static const char *TAG = "BLE_BEACON";
 
-char ble_beacon_devname[32];
-static void ble_beacon_devname_set(char *ip_str)
-{
-    if (ip_str == NULL) {
-        snprintf(ble_beacon_devname, sizeof(ble_beacon_devname), "CAN-OFFLINE");
-    } else {
-        snprintf(ble_beacon_devname, sizeof(ble_beacon_devname), "CAN-%s", ip_str);
-    }
-}
+char ble_beacon_devname[32] = "CAN-uninit"; // default name, will be updated by WIFI manager when IP obtained
 
 static void ble_beacon_devname_apply(void)
 {
@@ -30,13 +22,13 @@ static void ble_beacon_devname_apply(void)
     if (rc) {
         ESP_LOGE(TAG, "Failed to set advertising data, rc=%d", rc);
     }
+    ESP_LOGI(TAG, "BLE name updated to: %s", ble_beacon_devname);
 }
 
 void ble_beacon_update_ip_name(char *ip_str) // called by WIFI manager to change the BLE device name
 {
-    ble_beacon_devname_set(ip_str);
+    snprintf(ble_beacon_devname, sizeof(ble_beacon_devname), "CAN-%s", ip_str);
     ble_beacon_devname_apply();
-    ESP_LOGI(TAG, "BLE name updated to: %s", ble_beacon_devname);
 }
 
 // NimBLE HOST/CONTROLLER callback when they're sync
@@ -78,7 +70,6 @@ static void nimble_host_task(void *param)
 esp_err_t ble_beacon_init(void)
 {
     ESP_LOGI(TAG, "Initializing NimBLE...");
-    ble_beacon_devname_set(NULL);
     nimble_port_init();
     ble_svc_gap_init();                          // init GAP service
     ble_hs_cfg.sync_cb = on_sync;                // set the sync callback

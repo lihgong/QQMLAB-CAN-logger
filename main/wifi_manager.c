@@ -19,6 +19,7 @@ typedef struct wifi_manager_s {
     EventGroupHandle_t evt_grp;
 #define WIFI_EVT_BIT_CONNECTED (1 << 0)
 #define WIFI_EVT_BIT_GOT_IP (1 << 1)
+    char ip_str[16]; // 255.255.255.255, 15 chars + 1 null
 } wifi_manager_t;
 
 wifi_manager_t wifi_ctrl;
@@ -138,7 +139,8 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
             if (wifi_ctrl.task_handle) {
                 xTaskNotifyGive(wifi_ctrl.task_handle);
             }
-            ble_beacon_update_ip_name(NULL);
+            snprintf(wifi_ctrl.ip_str, sizeof(wifi_ctrl.ip_str), "OFFLINE");
+            ble_beacon_update_ip_name(wifi_ctrl.ip_str);
         }
 
     } else if (event_base == IP_EVENT) {
@@ -149,9 +151,8 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
             xEventGroupSetBits(wifi_ctrl.evt_grp, WIFI_EVT_BIT_GOT_IP);
 
             // notify bluetooth to change DEV-NAME
-            char ip_str[24];
-            snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&event->ip_info.ip));
-            ble_beacon_update_ip_name(ip_str);
+            snprintf(wifi_ctrl.ip_str, sizeof(wifi_ctrl.ip_str), IPSTR, IP2STR(&event->ip_info.ip));
+            ble_beacon_update_ip_name(wifi_ctrl.ip_str);
         }
     }
 }
@@ -213,6 +214,11 @@ esp_err_t wifi_sta_init(void)
     ESP_ERROR_CHECK(esp_wifi_start());
 
     return ESP_OK;
+}
+
+char *wifi_get_ip_str(void)
+{
+    return wifi_ctrl.ip_str;
 }
 
 // ----------
