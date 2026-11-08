@@ -1,3 +1,8 @@
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include "esp_log.h"
 #include "nimble/ble.h"
 #include "nimble/nimble_port.h"
@@ -8,7 +13,8 @@
 
 static const char *TAG = "BLE_BEACON";
 
-char ble_beacon_devname[32] = "CAN-uninit"; // default name, will be updated by WIFI manager when IP obtained
+char ble_beacon_devname[32]      = "CAN-uninit"; // default name, will be updated by WIFI manager when IP obtained
+static uint16_t ble_adv_interval = 2400;         // 0.625 ms units; 7200 = 4500 ms
 
 static void ble_beacon_devname_apply(void)
 {
@@ -47,8 +53,8 @@ static void on_sync(void)
         &(struct ble_gap_adv_params){
             .conn_mode = BLE_GAP_CONN_MODE_NON,
             .disc_mode = BLE_GAP_DISC_MODE_GEN, // discoverable
-            .itvl_min  = 2400,                  // 2400*0.625 = 1500 ms, minimize the Wi-Fi interference
-            .itvl_max  = 2400,                  // 2400*0.625 = 1500 ms
+            .itvl_min  = ble_adv_interval,
+            .itvl_max  = ble_adv_interval,
         },
         NULL, NULL);
     if (rc) {
@@ -76,4 +82,28 @@ esp_err_t ble_beacon_init(void)
     nimble_port_freertos_init(nimble_host_task); // start the FreeRTOS task to start Numble stack
 
     return ESP_OK;
+}
+
+// [ble_beacon]
+// interval = 7200
+uint32_t ble_beacon_syscfg(const char *section, const char *key, const char *value)
+{
+    if (strcmp(section, "ble_beacon") == 0 && strcmp(key, "interval") == 0) {
+        if (value == NULL) {
+            ESP_LOGW(TAG, "Invalid BLE advertising interval: (null)");
+            return 1;
+        }
+
+        char *endptr           = NULL;
+        unsigned long interval = strtoul(value, &endptr, 10);
+        if (endptr == value || *endptr != '\0' || interval < 0x20 || interval > 0x4000) {
+            ESP_LOGW(TAG, "Invalid BLE advertising interval: %s (expected 32..16384)", value);
+            return 1;
+        }
+
+        ble_adv_interval = (uint16_t)interval;
+        ESP_LOGI(TAG, "BLE advertising interval configured to %u (0.625 ms units)", (unsigned)ble_adv_interval);
+    }
+
+    return 1;
 }

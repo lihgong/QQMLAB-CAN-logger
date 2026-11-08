@@ -28,6 +28,17 @@ git update-index --assume-unchanged .vscode/settings.json
 
 5. Add .clang-format that lets the tool arrange K&R style that I expect to see
 
+==== SD card configuration ====
+Add the following to `/sdcard/syscfg.ini` to configure the BLE advertising interval:
+
+```ini
+[ble_beacon]
+interval = 7200
+```
+
+The value uses BLE advertising units of 0.625 ms, so `7200` is 4500 ms. The
+valid range is 32 to 16384; if omitted, the firmware uses 7200.
+
 ==== Development Journal ====
 2026/1/1
 Initial bring up of the board with WIFI
