@@ -14,6 +14,8 @@
 #include MAIN_INIT_HOOK_FILE
 #undef APP_MAIN_INIT_FUNC
 
+static const char *TAG = "MAIN";
+
 void app_main(void)
 {
     // Reserve time for USB to identify the device
@@ -30,4 +32,8 @@ void app_main(void)
     for (uint32_t i = 0; i < sizeof(fp_init) / sizeof(fp_init_t); i++) {
         ESP_ERROR_CHECK((fp_init[i])());
     }
+
+    // Infrastructure to measure the free heap size after 20 seconds, to check the free memory
+    vTaskDelay(pdMS_TO_TICKS(20000));
+    ESP_LOGW(TAG, "FREE MEM: %lu", esp_get_free_heap_size());
 }
