@@ -4,7 +4,7 @@
 #    Then run "idf.py save-defconfig" to update sdkconfig.defaults
 #    I will use tool to diff, and add comment as the file below
 #
-# 2. After editing this file, run "idf.py reconfigure" to update sdkconfig
+# 2. delete "sdkconfig" file manually, and run "idf.py reconfigure" to update sdkconfig
 #    which is used during build procedure
 #
 # 3. If everything works well, submit this file into git
@@ -30,7 +30,29 @@ CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
 CONFIG_HTTPD_MAX_URI_LEN=512
 
-# Enable BLE (NimBLE stack)
+
+# ----------
+# BLE (NimBLE stack and tuning)
+# ----------
 CONFIG_BT_ENABLED=y
 CONFIG_BT_BLE_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
+
+# ESP-IDF default: 24 blocks; 12 fewer blocks save about 3 KiB (256 B/block on this config)
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=12
+
+# NimBLE Host task stack: 2560 B (2.5 KiB; ESP-IDF default is 4096 B)
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=2560
+
+# Allow at most one concurrent BLE connection (no multi-link)
+# ESP-IDF v5.5.2 default on ESP32-C3: 3
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+
+# Disable legacy pairing and LE Secure Connections (estimated ~1 KB heap saved)
+CONFIG_BT_NIMBLE_SM_LEGACY=n
+CONFIG_BT_NIMBLE_SM_SC=n
+
+# Maximum simultaneous BLE controller activities (connection, advertising, etc.)
+CONFIG_BT_CTRL_BLE_MAX_ACT=2
+
+
