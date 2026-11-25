@@ -50,14 +50,12 @@ void led_op(uint32_t op_0on_1off_2toggle) // legacy API, always addressing the L
     led_op_ext(0, op_0on_1off_2toggle);
 }
 
-uint32_t led_is_on_bmp(void)
+uint8_t led_is_on(uint32_t led_idx)
 {
-    uint32_t ret = 0;
-    for (uint32_t i = 0; i < LED_PIN_NUM; i++) {
-        if (gpio_get_level(led_pins[i]) == LED_ON) {
-            ret |= (1 << i);
-        }
+    if (led_idx < LED_PIN_NUM) {
+        uint32_t gpio_read = gpio_get_level(led_pins[led_idx]);
+        return gpio_read == LED_ON ? 1 : 0;
+    } else {
+        return 0;
     }
-
-    return ret; // return bitmap indicating each LED status
 }

@@ -21,6 +21,6 @@ enum {
 
 void led_op_ext(uint32_t led_idx, uint32_t op_0on_1off_2toggle);
 void led_op(uint32_t op_0on_1off_2toggle);
-uint32_t led_is_on_bmp(void);
+uint8_t led_is_on(uint32_t led_idx);
 
 #endif // __LED_H__

@@ -158,10 +158,13 @@ static esp_err_t uri_index(httpd_req_t *req)
     twai_webui_status_t twai_status;
     twai_webui_query(&twai_status);
 
-    uint32_t led_stat     = led_is_on_bmp();
     char led_stat_buf[32] = {0};
     for (uint32_t i = 0; i < LED_PIN_NUM; i++) {
-        strcat(led_stat_buf, (led_stat & (1 << i)) ? "ON, " : "OFF, ");
+        if (led_is_on(i)) {
+            strcat(led_stat_buf, "ON, ");
+        } else {
+            strcat(led_stat_buf, "OFF, ");
+        }
     }
 
     const esp_app_desc_t *desc     = esp_app_get_description();
