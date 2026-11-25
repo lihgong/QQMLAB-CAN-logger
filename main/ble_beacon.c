@@ -81,15 +81,39 @@ static int cb_led_char(uint16_t conn_handle, uint16_t attr_handle, struct ble_ga
 }
 
 // Define GATT service table
+// TODO: refactor the following code into a structure
+static uint16_t s_led_val_handle; // NimBLE will fill the value when registering the service
+static bool s_led_notify_en   = false;
+static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+
+void ble_beacon_notify_led(uint8_t state)
+{
+    if (s_conn_handle == BLE_HS_CONN_HANDLE_NONE || !s_led_notify_en) {
+        return; // return if not connected or notify not enabled
+    }
+
+    struct os_mbuf *om = ble_hs_mbuf_from_flat(&state, sizeof(state));
+    if (om == NULL) {
+        ESP_LOGW(TAG, "No mbuf for LED notify");
+        return;
+    }
+
+    int rc = ble_gatts_notify_custom(s_conn_handle, s_led_val_handle, om);
+    if (rc != 0) {
+        ESP_LOGW(TAG, "Failed to notify LED state, rc=%d", rc);
+    }
+}
+
 static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
     {
         .type            = BLE_GATT_SVC_TYPE_PRIMARY,
         .uuid            = &uuid_led_svc.u,
         .characteristics = (struct ble_gatt_chr_def[]){
             {
-                .uuid      = &uuid_led_chr.u,
-                .access_cb = cb_led_char,
-                .flags     = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_READ,
+                .uuid       = &uuid_led_chr.u,
+                .access_cb  = cb_led_char,
+                .val_handle = &s_led_val_handle,
+                .flags      = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_NO_RSP | BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
             },
             {0},
         },
@@ -105,19 +129,26 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
 {
     if (event->type == BLE_GAP_EVENT_CONNECT) { // this is connect event "result"
         ESP_LOGI(TAG, "BLE %s (status=%d)", event->connect.status == 0 ? "connected" : "connect failed", event->connect.status);
-        if (event->connect.status != 0) {
+        if (event->connect.status == 0) { // connection established
+            s_conn_handle = event->connect.conn_handle;
+        } else {
             ble_beacon_adv_start(); // if connection failed, restart advertising
         }
-        return 0;
 
     } else if (event->type == BLE_GAP_EVENT_DISCONNECT) {
         ESP_LOGI(TAG, "BLE disconnected (reason=%d), restarting adv...", event->disconnect.reason);
-        ble_beacon_adv_start(); // resume advertising after disconnection
-        return 0;
+        s_conn_handle   = BLE_HS_CONN_HANDLE_NONE;
+        s_led_notify_en = false; // reset notify status
+        ble_beacon_adv_start();  // resume advertising after disconnection
 
-    } else {
-        return 0;
+    } else if (event->type == BLE_GAP_EVENT_SUBSCRIBE) {
+        if (event->subscribe.attr_handle == s_led_val_handle) {
+            s_led_notify_en = (event->subscribe.cur_notify != 0);
+            ESP_LOGI(TAG, "LED notify %s", s_led_notify_en ? "enabled" : "disabled");
+        }
     }
+
+    return 0;
 }
 
 static void ble_beacon_adv_start(void)

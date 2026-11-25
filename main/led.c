@@ -42,6 +42,11 @@ void led_op_ext(uint32_t led_idx, uint32_t op_0on_1off_2toggle)
             uint32_t gpio_read = gpio_get_level(led_pin);
             gpio_set_level(led_pin, !gpio_read);
         }
+
+        if (led_idx == 0) {
+            extern void ble_beacon_notify_led(uint8_t state);
+            ble_beacon_notify_led(led_is_on(0) ? 1 : 0); // only notify LED0 status
+        }
     }
 }
 
