@@ -41,9 +41,6 @@ CONFIG_BT_NIMBLE_ENABLED=y
 # ESP-IDF default: 24 blocks; 12 fewer blocks save about 3 KiB (256 B/block on this config)
 CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=12
 
-# NimBLE Host task stack: 2560 B (2.5 KiB; ESP-IDF default is 4096 B)
-CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=2560
-
 # Allow at most one concurrent BLE connection (no multi-link)
 # ESP-IDF v5.5.2 default on ESP32-C3: 3
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
